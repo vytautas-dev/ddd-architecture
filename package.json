@@ -4,10 +4,17 @@
   "description": "",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "format": "biome format --write ./src",
+    "lint": "biome check ./src"
   },
-  "dependencies": {},
   "devDependencies": {
+    "@biomejs/biome": "^2.4.9",
+    "@types/jest": "^30.0.0",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.6",
     "typescript": "^5.5.3"
   },
   "private": true
