@@ -1,4 +1,5 @@
-import { Money, MoneyInvalidError } from "../Money";
+import { Money } from "../Money";
+import { MoneyInvalidError } from "../MoneyErrors";
 
 describe("Money", () => {
   describe("constructor", () => {

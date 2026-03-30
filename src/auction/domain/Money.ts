@@ -1,16 +1,4 @@
-export class MoneyInvalidError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "MoneyInvalidError";
-  }
-}
-
-export class CurrencyMismatchError extends Error {
-  constructor() {
-    super("Cannot compare Money with different currencies");
-    this.name = "CurrencyMismatchError";
-  }
-}
+import { CurrencyMismatchError, MoneyInvalidError } from "./MoneyErrors";
 
 export class Money {
   public readonly amount: number;
