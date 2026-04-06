@@ -1,5 +1,10 @@
 import { CurrencyMismatchError, MoneyInvalidError } from "./MoneyErrors";
 
+export type MoneyAttributes = {
+  amount: number;
+  currency: string;
+};
+
 export class Money {
   public readonly amount: number;
   public readonly currency: string;
