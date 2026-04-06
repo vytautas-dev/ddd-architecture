@@ -1,5 +1,5 @@
-import { PrismaClient } from "../../../generated/prisma/internal/class";
-import { AuctionDomainEvent } from "../../domain/AuctionEvents";
+import type { PrismaClient } from "../../../generated/prisma/client";
+import type { AuctionDomainEvent } from "../../domain/AuctionEvents";
 
 export class ActiveAuctionsProjection {
   constructor(private readonly prisma: PrismaClient) {}
