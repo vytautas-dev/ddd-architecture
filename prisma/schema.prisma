@@ -20,3 +20,16 @@ model EventStore {
   @@index([streamId])
   @@map("event_store")
 }
+
+model ActiveAuctionView {
+  id             String   @id
+  sellerId       String
+  title          String
+  currentBid     Float?
+  currency       String
+  endsAt         DateTime
+  totalBids      Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@map("active_auctions_view")
+}
