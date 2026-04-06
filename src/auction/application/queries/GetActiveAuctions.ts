@@ -1,4 +1,4 @@
-import { PrismaClient } from "../../../generated/prisma/internal/class";
+import type { PrismaClient } from "../../../generated/prisma/client";
 
 interface GetActiveAuctionsQuery {}
 
@@ -15,6 +15,8 @@ export class GetActiveAuctionsHandler {
   constructor(private readonly prisma: PrismaClient) {}
 
   execute(): Promise<ActiveAuctionDto[]> {
-    return this.prisma.activeAuctionView.findMany();
+    return this.prisma.activeAuctionView.findMany({
+      orderBy: { endsAt: "asc" },
+    });
   }
 }
