@@ -1,0 +1,22 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model EventStore {
+  id         String   @id @default(uuid())
+  streamId   String
+  streamType String
+  eventType  String
+  payload    Json
+  version    Int
+  occurredAt DateTime @default(now())
+
+  @@unique([streamId, version])
+  @@index([streamId])
+  @@map("event_store")
+}
