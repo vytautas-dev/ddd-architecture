@@ -7,6 +7,7 @@ import { ActiveAuctionsProjection } from "./auction/infrastructure/projections/A
 import { CreateAuctionHandler } from "./auction/application/commands/CreateAuction";
 import { PlaceBidHandler } from "./auction/application/commands/PlaceBid";
 import { CancelAuctionHandler } from "./auction/application/commands/CancelAuction";
+import { GetActiveAuctionsHandler } from "./auction/application/queries/GetActiveAuctions";
 
 // Infrastructure
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
@@ -19,3 +20,5 @@ const auctionRepository = new AuctionRepository(eventStore);
 export const createAuctionHandler = new CreateAuctionHandler(auctionRepository);
 export const placeBidHandler = new PlaceBidHandler(auctionRepository);
 export const cancelAuctionHandler = new CancelAuctionHandler(auctionRepository);
+
+export const getActiveAuctionsHandler = new GetActiveAuctionsHandler(prisma);
