@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../../generated/prisma/internal/class";
+import type { PrismaClient } from "../../generated/prisma/client";
 import type { AuctionDomainEvent } from "../domain/AuctionEvents";
 import type { IEventStore, StoredEvent } from "../domain/IEventStore";
 import type { IProjection } from "../domain/IProjection";
