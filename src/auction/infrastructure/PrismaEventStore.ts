@@ -1,6 +1,7 @@
 import type { PrismaClient } from "../../generated/prisma/internal/class";
 import type { AuctionDomainEvent } from "../domain/AuctionEvents";
 import type { IEventStore, StoredEvent } from "../domain/IEventStore";
+import type { IProjection } from "../domain/IProjection";
 
 export class OptimisticConcurrencyError extends Error {
   constructor(streamId: string) {
@@ -10,7 +11,10 @@ export class OptimisticConcurrencyError extends Error {
 }
 
 export class PrismaEventStore implements IEventStore {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly projections: IProjection[] = [],
+  ) {}
 
   async append(
     streamId: string,
@@ -33,6 +37,12 @@ export class PrismaEventStore implements IEventStore {
         throw new OptimisticConcurrencyError(streamId);
       }
       throw error;
+    }
+
+    for (const event of events) {
+      for (const projection of this.projections) {
+        await projection.handle(event);
+      }
     }
   }
 
