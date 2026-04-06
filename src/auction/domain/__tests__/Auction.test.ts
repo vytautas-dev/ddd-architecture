@@ -8,7 +8,7 @@ import {
 } from "../AuctionErrors";
 
 const makeAuction = (overrides?: Partial<{ endsAt: Date }>) =>
-  new Auction(
+  Auction.create(
     "auction-1",
     "seller-1",
     "Vintage Camera",
@@ -86,6 +86,42 @@ describe("Auction", () => {
       const auction = makeAuction();
       auction.close();
       expect(auction.status).toBe(AuctionStatus.CLOSED);
+    });
+  });
+
+  describe("event sourcing", () => {
+    it("records AuctionCreated event on create", () => {
+      const auction = makeAuction();
+      const events = auction.getUncommittedEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0].eventType).toBe("AuctionCreated");
+    });
+
+    it("records BidPlaced event on placeBid", () => {
+      const auction = makeAuction();
+      auction.placeBid("bidder-1", new Money(150, "PLN"));
+      const events = auction.getUncommittedEvents();
+      expect(events).toHaveLength(2);
+      expect(events[1].eventType).toBe("BidPlaced");
+    });
+
+    it("reconstitutes auction state from events", () => {
+      const original = makeAuction();
+      original.placeBid("bidder-1", new Money(150, "PLN"));
+      original.placeBid("bidder-2", new Money(200, "PLN"));
+
+      const reconstituted = Auction.reconstitute(original.getUncommittedEvents());
+
+      expect(reconstituted.id).toBe(original.id);
+      expect(reconstituted.currentHighestBid?.amount).toBe(200);
+      expect(reconstituted.currentHighestBidderId).toBe("bidder-2");
+      expect(reconstituted.status).toBe(AuctionStatus.ACTIVE);
+    });
+
+    it("reconstituted auction has no uncommitted events", () => {
+      const original = makeAuction();
+      const reconstituted = Auction.reconstitute(original.getUncommittedEvents());
+      expect(reconstituted.getUncommittedEvents()).toHaveLength(0);
     });
   });
 

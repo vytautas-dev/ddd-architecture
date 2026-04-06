@@ -25,3 +25,10 @@ export class CannotCancelAuctionWithBidsError extends Error {
     this.name = "CannotCancelAuctionWithBidsError";
   }
 }
+
+export class AuctionNotFoundError extends Error {
+  constructor() {
+    super("Auction not found");
+    this.name = "AuctionNotFoundError";
+  }
+}
