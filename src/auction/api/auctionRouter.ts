@@ -1,0 +1,35 @@
+import { Router, type Request, type Response } from "express";
+import { z } from "zod";
+import { createAuctionHandler, getActiveAuctionsHandler } from "../../index";
+import { v4 as uuid } from "uuid";
+
+export const auctionRouter = Router();
+
+const CreateAuctionSchema = z.object({
+  sellerId: z.uuid(),
+  title: z.string().min(3).max(100),
+  startingPrice: z.object({
+    amount: z.number().positive(),
+    currency: z.string().length(3),
+  }),
+  endsAt: z.iso.datetime().transform((val) => new Date(val)),
+});
+
+auctionRouter.post("/auctions", async (req: Request, res: Response) => {
+  const result = CreateAuctionSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ errors: result.error.flatten() });
+    return;
+  }
+  await createAuctionHandler.execute({
+    auctionId: uuid(),
+    ...result.data,
+  });
+
+  res.status(201).json({ message: "Auction created" });
+});
+
+auctionRouter.get("/auctions", async (_req: Request, res: Response) => {
+  const auctions = await getActiveAuctionsHandler.execute();
+  res.json(auctions);
+});
