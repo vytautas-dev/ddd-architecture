@@ -6,7 +6,7 @@ import {
   BidTooLowError,
   CannotCancelAuctionWithBidsError,
 } from "../domain/AuctionErrors";
-import { OptimisticConcurrencyError } from "../infrastructure/PrismaEventStore";
+import { OptimisticConcurrencyError } from "../../shared/infrastructure/EventStore";
 
 type DomainErrorClass = new (...args: never[]) => Error;
 

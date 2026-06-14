@@ -1,5 +1,5 @@
 import type { PrismaClient } from "../../generated/prisma/client";
-import type { AuctionDomainEvent } from "../domain/AuctionEvents";
+import type { DomainEvent } from "../domain/DomainEvent";
 import type { IEventStore, StoredEvent } from "../domain/IEventStore";
 import type { IProjection } from "../domain/IProjection";
 
@@ -10,20 +10,21 @@ export class OptimisticConcurrencyError extends Error {
   }
 }
 
-export class PrismaEventStore implements IEventStore {
+export class EventStore implements IEventStore {
   constructor(
     private readonly prisma: PrismaClient,
-    private readonly projections: IProjection[] = [],
+    private readonly projections: Record<string, IProjection[]> = {},
   ) {}
 
   async append(
+    streamType: string,
     streamId: string,
-    events: AuctionDomainEvent[],
+    events: DomainEvent[],
     expectedVersion: number,
   ): Promise<void> {
     const records = events.map((event, index) => ({
       streamId,
-      streamType: "auction",
+      streamType,
       eventType: event.eventType,
       payload: event as object,
       version: expectedVersion + index + 1,
@@ -39,8 +40,9 @@ export class PrismaEventStore implements IEventStore {
       throw error;
     }
 
+    const projections = this.projections[streamType] ?? [];
     for (const event of events) {
-      for (const projection of this.projections) {
+      for (const projection of projections) {
         await projection.handle(event);
       }
     }
@@ -56,7 +58,7 @@ export class PrismaEventStore implements IEventStore {
       id: record.id,
       streamId: record.streamId,
       eventType: record.eventType,
-      payload: record.payload as unknown as AuctionDomainEvent,
+      payload: record.payload as unknown as DomainEvent,
       version: record.version,
       occurredAt: record.occurredAt,
     }));

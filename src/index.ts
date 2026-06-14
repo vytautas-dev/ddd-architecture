@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "./generated/prisma/client";
-import { PrismaEventStore } from "./auction/infrastructure/PrismaEventStore";
+import { EventStore } from "./shared/infrastructure/EventStore";
 import { AuctionRepository } from "./auction/infrastructure/AuctionRepository";
 import { ActiveAuctionsProjection } from "./auction/infrastructure/projections/ActiveAuctionsProjection";
 import { CreateAuctionHandler } from "./auction/application/commands/CreateAuction";
@@ -16,7 +16,9 @@ import { domainErrorHandler } from "./auction/api/errorHandler";
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
 const prisma = new PrismaClient({ adapter });
 const activeAuctionsProjection = new ActiveAuctionsProjection(prisma);
-const eventStore = new PrismaEventStore(prisma, [activeAuctionsProjection]);
+const eventStore = new EventStore(prisma, {
+  auction: [activeAuctionsProjection],
+});
 const auctionRepository = new AuctionRepository(eventStore);
 
 // Command Handlers

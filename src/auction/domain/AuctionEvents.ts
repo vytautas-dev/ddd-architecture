@@ -1,9 +1,5 @@
+import type { DomainEvent } from "../../shared/domain/DomainEvent";
 import type { MoneyAttributes } from "./Money";
-
-export interface DomainEvent {
-  readonly eventType: string;
-  readonly occurredAt: Date;
-}
 
 export interface AuctionCreatedEvent extends DomainEvent {
   readonly eventType: "AuctionCreated";

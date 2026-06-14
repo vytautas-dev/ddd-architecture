@@ -1,18 +1,19 @@
-import type { AuctionDomainEvent } from "./AuctionEvents";
+import type { DomainEvent } from "./DomainEvent";
 
 export interface StoredEvent {
   id: string;
   streamId: string;
   eventType: string;
-  payload: AuctionDomainEvent;
+  payload: DomainEvent;
   version: number;
   occurredAt: Date;
 }
 
 export interface IEventStore {
   append(
+    streamType: string,
     streamId: string,
-    events: AuctionDomainEvent[],
+    events: DomainEvent[],
     expectedVersion: number,
   ): Promise<void>;
 
