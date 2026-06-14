@@ -4,6 +4,7 @@ import {
   createAuctionHandler,
   getActiveAuctionsHandler,
   placeBidHandler,
+  cancelAuctionHandler,
 } from "../../index";
 import { v4 as uuid } from "uuid";
 import {
@@ -11,6 +12,7 @@ import {
   AuctionClosedError,
   SellerCannotBidError,
   BidTooLowError,
+  CannotCancelAuctionWithBidsError,
 } from "../domain/AuctionErrors";
 import { OptimisticConcurrencyError } from "../infrastructure/PrismaEventStore";
 
@@ -83,6 +85,35 @@ auctionRouter.post(
         error instanceof AuctionClosedError ||
         error instanceof SellerCannotBidError ||
         error instanceof BidTooLowError ||
+        error instanceof OptimisticConcurrencyError
+      ) {
+        res.status(409).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
+  },
+);
+
+auctionRouter.post(
+  "/auctions/:auctionId/cancellation",
+  async (req: Request, res: Response) => {
+    const auctionId = z.uuid().safeParse(req.params["auctionId"]);
+    if (!auctionId.success) {
+      res.status(400).json({ error: "Invalid auction id" });
+      return;
+    }
+
+    try {
+      await cancelAuctionHandler.execute({ auctionId: auctionId.data });
+      res.status(200).json({ message: "Auction cancelled" });
+    } catch (error) {
+      if (error instanceof AuctionNotFoundError) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      if (
+        error instanceof CannotCancelAuctionWithBidsError ||
         error instanceof OptimisticConcurrencyError
       ) {
         res.status(409).json({ error: error.message });
