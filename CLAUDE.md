@@ -86,7 +86,14 @@ src/
 
 ## Current Stage
 
-**Stage 1: DDD Fundamentals** — building the Auction domain as pure TypeScript classes (no database, no framework).
+**Wymaganie 1 — "favorite upcoming auctions" — COMPLETE** (plan: `WYMAGANIE_1_ULUBIONE_PLAN.md`). Stages 1–4 effectively covered:
+
+- **DDD** — two bounded contexts: `Auction` and `Watchlist` (aggregate `Watchlist`, streamId = bidderId).
+- **Event Sourcing** — event store generalized into `shared/`, projections registered per `streamType` ("auction", "watchlist").
+- **CQRS** — commands (favorite/unfavorite/start) separated from queries (read from denormalized views only).
+- **Read Models / Projections** — `ActiveAuctionsProjection` + `FavoritesProjection` (the latter consumes events from BOTH contexts).
+
+Parked: aggregate `version`/optimistic-concurrency not fully wired; keyset pagination for `GetMyFavorites` deferred; `X-User-Id` is a placeholder for a future Identity context.
 
 Update this section when a stage is completed.
 
