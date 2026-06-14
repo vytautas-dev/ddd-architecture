@@ -12,6 +12,13 @@ export interface AuctionCreatedEvent extends DomainEvent {
   readonly title: string;
   readonly startingPrice: MoneyAttributes;
   readonly endsAt: Date;
+  readonly startsAt: Date;
+  readonly status: "SCHEDULED" | "ACTIVE";
+}
+
+export interface AuctionStartedEvent extends DomainEvent {
+  readonly eventType: "AuctionStarted";
+  readonly auctionId: string;
 }
 
 export interface BidPlacedEvent extends DomainEvent {
@@ -34,6 +41,7 @@ export interface AuctionCancelledEvent extends DomainEvent {
 
 export type AuctionDomainEvent =
   | AuctionCreatedEvent
+  | AuctionStartedEvent
   | BidPlacedEvent
   | AuctionClosedEvent
   | AuctionCancelledEvent;

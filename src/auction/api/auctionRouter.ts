@@ -18,6 +18,7 @@ const CreateAuctionSchema = z.object({
     currency: z.string().length(3),
   }),
   endsAt: z.iso.datetime().transform((val) => new Date(val)),
+  startsAt: z.iso.datetime().transform((val) => new Date(val)),
 });
 
 const PlaceBidSchema = z.object({

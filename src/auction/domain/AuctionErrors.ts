@@ -32,3 +32,17 @@ export class AuctionNotFoundError extends Error {
     this.name = "AuctionNotFoundError";
   }
 }
+
+export class AuctionNotScheduledError extends Error {
+  constructor() {
+    super("Auction can only be started while it is scheduled");
+    this.name = "AuctionNotScheduledError";
+  }
+}
+
+export class AuctionNotStartedError extends Error {
+  constructor() {
+    super("Cannot place a bid before the auction has started");
+    this.name = "AuctionNotStartedError";
+  }
+}

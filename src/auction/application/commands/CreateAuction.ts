@@ -8,6 +8,7 @@ export interface CreateAuctionCommand {
   title: string;
   startingPrice: { amount: number; currency: string };
   endsAt: Date;
+  startsAt: Date;
 }
 
 export class CreateAuctionHandler {
@@ -20,6 +21,7 @@ export class CreateAuctionHandler {
       command.title,
       new Money(command.startingPrice.amount, command.startingPrice.currency),
       command.endsAt,
+      command.startsAt,
     );
 
     await this.auctionRepository.save(auction);

@@ -2,19 +2,28 @@ import { Auction, AuctionStatus } from "../Auction";
 import { Money } from "../Money";
 import {
   AuctionClosedError,
+  AuctionNotScheduledError,
+  AuctionNotStartedError,
   BidTooLowError,
   CannotCancelAuctionWithBidsError,
   SellerCannotBidError,
 } from "../AuctionErrors";
 
-const makeAuction = (overrides?: Partial<{ endsAt: Date }>) =>
+const HOUR = 3600000;
+
+const makeAuction = (overrides?: Partial<{ endsAt: Date; startsAt: Date }>) =>
   Auction.create(
     "auction-1",
     "seller-1",
     "Vintage Camera",
     new Money(100, "PLN"),
-    overrides?.endsAt ?? new Date(Date.now() + 86400000),
+    overrides?.endsAt ?? new Date(Date.now() + 24 * HOUR),
+    // default: already started in the past → ACTIVE
+    overrides?.startsAt ?? new Date(Date.now() - HOUR),
   );
+
+const makeScheduledAuction = () =>
+  makeAuction({ startsAt: new Date(Date.now() + HOUR) });
 
 describe("Auction", () => {
   describe("constructor", () => {
@@ -23,6 +32,53 @@ describe("Auction", () => {
       expect(auction.status).toBe(AuctionStatus.ACTIVE);
       expect(auction.currentHighestBid).toBeNull();
       expect(auction.currentHighestBidderId).toBeNull();
+    });
+  });
+
+  describe("lifecycle (scheduled / start)", () => {
+    it("creates a SCHEDULED auction when startsAt is in the future", () => {
+      const auction = makeScheduledAuction();
+      expect(auction.status).toBe(AuctionStatus.SCHEDULED);
+    });
+
+    it("creates an ACTIVE auction when startsAt is in the past", () => {
+      const auction = makeAuction({ startsAt: new Date(Date.now() - HOUR) });
+      expect(auction.status).toBe(AuctionStatus.ACTIVE);
+    });
+
+    it("start() transitions a scheduled auction to ACTIVE", () => {
+      const auction = makeScheduledAuction();
+      auction.start();
+      expect(auction.status).toBe(AuctionStatus.ACTIVE);
+    });
+
+    it("start() records an AuctionStarted event", () => {
+      const auction = makeScheduledAuction();
+      auction.start();
+      const events = auction.getUncommittedEvents();
+      expect(events).toHaveLength(2);
+      expect(events[1].eventType).toBe("AuctionStarted");
+    });
+
+    it("throws AuctionNotScheduledError when starting an active auction", () => {
+      const auction = makeAuction();
+      expect(() => auction.start()).toThrow(AuctionNotScheduledError);
+    });
+
+    it("throws AuctionNotScheduledError when starting a closed auction", () => {
+      const auction = makeScheduledAuction();
+      auction.start();
+      auction.close();
+      expect(() => auction.start()).toThrow(AuctionNotScheduledError);
+    });
+
+    it("reconstitutes to ACTIVE from [AuctionCreated(SCHEDULED), AuctionStarted]", () => {
+      const original = makeScheduledAuction();
+      original.start();
+      const reconstituted = Auction.reconstitute(
+        original.getUncommittedEvents(),
+      );
+      expect(reconstituted.status).toBe(AuctionStatus.ACTIVE);
     });
   });
 
@@ -69,6 +125,13 @@ describe("Auction", () => {
       auction.close();
       expect(() => auction.placeBid("bidder-1", new Money(150, "PLN"))).toThrow(
         AuctionClosedError,
+      );
+    });
+
+    it("throws AuctionNotStartedError when auction is scheduled", () => {
+      const auction = makeScheduledAuction();
+      expect(() => auction.placeBid("bidder-1", new Money(150, "PLN"))).toThrow(
+        AuctionNotStartedError,
       );
     });
 

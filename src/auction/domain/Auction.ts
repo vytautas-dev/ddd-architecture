@@ -1,6 +1,8 @@
 import { Money } from "./Money";
 import {
   AuctionClosedError,
+  AuctionNotScheduledError,
+  AuctionNotStartedError,
   BidTooLowError,
   CannotCancelAuctionWithBidsError,
   SellerCannotBidError,
@@ -8,6 +10,7 @@ import {
 import type { AuctionDomainEvent } from "./AuctionEvents";
 
 export enum AuctionStatus {
+  SCHEDULED = "SCHEDULED",
   ACTIVE = "ACTIVE",
   CLOSED = "CLOSED",
   CANCELLED = "CANCELLED",
@@ -19,6 +22,7 @@ export class Auction {
   public title!: string;
   public startingPrice!: Money;
   public endsAt!: Date;
+  public startsAt!: Date;
   public currentHighestBid: Money | null = null;
   public currentHighestBidderId: string | null = null;
   public status: AuctionStatus = AuctionStatus.ACTIVE;
@@ -34,8 +38,10 @@ export class Auction {
     title: string,
     startingPrice: Money,
     endsAt: Date,
+    startsAt: Date,
   ): Auction {
     const auction = new Auction();
+    const status = startsAt.getTime() > Date.now() ? "SCHEDULED" : "ACTIVE";
     auction.applyAndRecord({
       eventType: "AuctionCreated",
       auctionId: id,
@@ -46,6 +52,8 @@ export class Auction {
         currency: startingPrice.currency,
       },
       endsAt,
+      startsAt,
+      status,
       occurredAt: new Date(),
     });
     return auction;
@@ -59,7 +67,21 @@ export class Auction {
     return auction;
   }
 
+  start(): void {
+    if (this.status !== AuctionStatus.SCHEDULED) {
+      throw new AuctionNotScheduledError();
+    }
+    this.applyAndRecord({
+      eventType: "AuctionStarted",
+      auctionId: this.id,
+      occurredAt: new Date(),
+    });
+  }
+
   placeBid(bidderId: string, amount: Money): void {
+    if (this.status === AuctionStatus.SCHEDULED) {
+      throw new AuctionNotStartedError();
+    }
     if (this.status !== AuctionStatus.ACTIVE) {
       throw new AuctionClosedError();
     }
@@ -112,6 +134,14 @@ export class Auction {
           event.startingPrice.currency,
         );
         this.endsAt = event.endsAt;
+        this.startsAt = event.startsAt;
+        this.status =
+          event.status === "SCHEDULED"
+            ? AuctionStatus.SCHEDULED
+            : AuctionStatus.ACTIVE;
+        break;
+      case "AuctionStarted":
+        this.status = AuctionStatus.ACTIVE;
         break;
       case "BidPlaced":
         this.currentHighestBid = new Money(
