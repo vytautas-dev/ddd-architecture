@@ -10,6 +10,7 @@ import { PlaceBidHandler } from "./auction/application/commands/PlaceBid";
 import { CancelAuctionHandler } from "./auction/application/commands/CancelAuction";
 import { GetActiveAuctionsHandler } from "./auction/application/queries/GetActiveAuctions";
 import { auctionRouter } from "./auction/api/auctionRouter";
+import { domainErrorHandler } from "./auction/api/errorHandler";
 
 // Infrastructure
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
@@ -28,6 +29,7 @@ export const getActiveAuctionsHandler = new GetActiveAuctionsHandler(prisma);
 const app = express();
 app.use(express.json());
 app.use(auctionRouter);
+app.use(domainErrorHandler);
 
 const PORT = process.env["PORT"] ?? 3000;
 app.listen(PORT, () => {

@@ -7,14 +7,6 @@ import {
   cancelAuctionHandler,
 } from "../../index";
 import { v4 as uuid } from "uuid";
-import {
-  AuctionNotFoundError,
-  AuctionClosedError,
-  SellerCannotBidError,
-  BidTooLowError,
-  CannotCancelAuctionWithBidsError,
-} from "../domain/AuctionErrors";
-import { OptimisticConcurrencyError } from "../infrastructure/PrismaEventStore";
 
 export const auctionRouter = Router();
 
@@ -70,28 +62,11 @@ auctionRouter.post(
       return;
     }
 
-    try {
-      await placeBidHandler.execute({
-        auctionId: auctionId.data,
-        ...result.data,
-      });
-      res.status(201).json({ message: "Bid placed" });
-    } catch (error) {
-      if (error instanceof AuctionNotFoundError) {
-        res.status(404).json({ error: error.message });
-        return;
-      }
-      if (
-        error instanceof AuctionClosedError ||
-        error instanceof SellerCannotBidError ||
-        error instanceof BidTooLowError ||
-        error instanceof OptimisticConcurrencyError
-      ) {
-        res.status(409).json({ error: error.message });
-        return;
-      }
-      throw error;
-    }
+    await placeBidHandler.execute({
+      auctionId: auctionId.data,
+      ...result.data,
+    });
+    res.status(201).json({ message: "Bid placed" });
   },
 );
 
@@ -104,22 +79,7 @@ auctionRouter.post(
       return;
     }
 
-    try {
-      await cancelAuctionHandler.execute({ auctionId: auctionId.data });
-      res.status(200).json({ message: "Auction cancelled" });
-    } catch (error) {
-      if (error instanceof AuctionNotFoundError) {
-        res.status(404).json({ error: error.message });
-        return;
-      }
-      if (
-        error instanceof CannotCancelAuctionWithBidsError ||
-        error instanceof OptimisticConcurrencyError
-      ) {
-        res.status(409).json({ error: error.message });
-        return;
-      }
-      throw error;
-    }
+    await cancelAuctionHandler.execute({ auctionId: auctionId.data });
+    res.status(200).json({ message: "Auction cancelled" });
   },
 );

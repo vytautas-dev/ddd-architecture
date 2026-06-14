@@ -1,7 +1,5 @@
 import type { PrismaClient } from "../../../generated/prisma/client";
 
-interface GetActiveAuctionsQuery {}
-
 interface ActiveAuctionDto {
   id: string;
   title: string;
