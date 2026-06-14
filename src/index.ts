@@ -11,6 +11,7 @@ import { CancelAuctionHandler } from "./auction/application/commands/CancelAucti
 import { GetActiveAuctionsHandler } from "./auction/application/queries/GetActiveAuctions";
 import { auctionRouter } from "./auction/api/auctionRouter";
 import { domainErrorHandler } from "./auction/api/errorHandler";
+import { StartAuctionHandler } from "./auction/application/commands/StartAuction";
 
 // Infrastructure
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
@@ -23,6 +24,7 @@ const auctionRepository = new AuctionRepository(eventStore);
 
 // Command Handlers
 export const createAuctionHandler = new CreateAuctionHandler(auctionRepository);
+export const startAuctionHandler = new StartAuctionHandler(auctionRepository);
 export const placeBidHandler = new PlaceBidHandler(auctionRepository);
 export const cancelAuctionHandler = new CancelAuctionHandler(auctionRepository);
 export const getActiveAuctionsHandler = new GetActiveAuctionsHandler(prisma);

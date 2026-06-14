@@ -5,6 +5,8 @@ import {
   SellerCannotBidError,
   BidTooLowError,
   CannotCancelAuctionWithBidsError,
+  AuctionNotScheduledError,
+  AuctionNotStartedError,
 } from "../domain/AuctionErrors";
 import { OptimisticConcurrencyError } from "../../shared/infrastructure/EventStore";
 
@@ -17,6 +19,8 @@ const errorStatusMap: ReadonlyArray<[DomainErrorClass, number]> = [
   [BidTooLowError, 409],
   [CannotCancelAuctionWithBidsError, 409],
   [OptimisticConcurrencyError, 409],
+  [AuctionNotScheduledError, 409],
+  [AuctionNotStartedError, 409],
 ];
 
 export function domainErrorHandler(

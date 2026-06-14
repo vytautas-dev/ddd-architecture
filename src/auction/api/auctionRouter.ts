@@ -5,6 +5,7 @@ import {
   getActiveAuctionsHandler,
   placeBidHandler,
   cancelAuctionHandler,
+  startAuctionHandler,
 } from "../../index";
 import { v4 as uuid } from "uuid";
 
@@ -82,5 +83,20 @@ auctionRouter.post(
 
     await cancelAuctionHandler.execute({ auctionId: auctionId.data });
     res.status(200).json({ message: "Auction cancelled" });
+  },
+);
+
+auctionRouter.post(
+  "/auctions/:auctionId/start",
+  async (req: Request, res: Response) => {
+    const auctionId = z.uuid().safeParse(req.params["auctionId"]);
+    if (!auctionId.success) {
+      res.status(400).json({ error: "Invalid auction id" });
+      return;
+    }
+
+    await startAuctionHandler.execute({ auctionId: auctionId.data });
+    res.status(200).json({ message: "Auction started" });
+    return;
   },
 );
