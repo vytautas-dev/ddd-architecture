@@ -15,8 +15,10 @@ export class ActiveAuctionsProjection implements IProjection {
             id: e.auctionId,
             sellerId: e.sellerId,
             title: e.title,
+            status: e.status,
             currentBid: null,
             currency: e.startingPrice.currency,
+            startsAt: e.startsAt,
             endsAt: e.endsAt,
             totalBids: 0,
           },
@@ -29,6 +31,12 @@ export class ActiveAuctionsProjection implements IProjection {
             currentBid: e.amount.amount,
             totalBids: { increment: 1 },
           },
+        });
+        break;
+      case "AuctionStarted":
+        await this.prisma.activeAuctionView.update({
+          where: { id: e.auctionId },
+          data: { status: "ACTIVE" },
         });
         break;
       case "AuctionClosed":

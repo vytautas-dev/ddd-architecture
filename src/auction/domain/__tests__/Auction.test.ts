@@ -173,7 +173,9 @@ describe("Auction", () => {
       original.placeBid("bidder-1", new Money(150, "PLN"));
       original.placeBid("bidder-2", new Money(200, "PLN"));
 
-      const reconstituted = Auction.reconstitute(original.getUncommittedEvents());
+      const reconstituted = Auction.reconstitute(
+        original.getUncommittedEvents(),
+      );
 
       expect(reconstituted.id).toBe(original.id);
       expect(reconstituted.currentHighestBid?.amount).toBe(200);
@@ -183,7 +185,9 @@ describe("Auction", () => {
 
     it("reconstituted auction has no uncommitted events", () => {
       const original = makeAuction();
-      const reconstituted = Auction.reconstitute(original.getUncommittedEvents());
+      const reconstituted = Auction.reconstitute(
+        original.getUncommittedEvents(),
+      );
       expect(reconstituted.getUncommittedEvents()).toHaveLength(0);
     });
   });

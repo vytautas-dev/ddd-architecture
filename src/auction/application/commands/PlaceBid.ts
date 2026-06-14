@@ -17,7 +17,10 @@ export class PlaceBidHandler {
       throw new AuctionNotFoundError();
     }
 
-    auction.placeBid(command.bidderId, new Money(command.amount.amount, command.amount.currency));
+    auction.placeBid(
+      command.bidderId,
+      new Money(command.amount.amount, command.amount.currency),
+    );
     await this.auctionRepository.save(auction);
   }
 }
