@@ -35,3 +35,19 @@ model ActiveAuctionView {
 
   @@map("active_auctions_view")
 }
+
+model FavoriteView {
+  bidderId    String
+  auctionId   String
+  title       String
+  status      String
+  currentBid  Float?
+  currency    String
+  startsAt    DateTime
+  favoritedAt DateTime
+
+  @@id([bidderId, auctionId])
+  @@index([bidderId, startsAt, auctionId])
+  @@index([auctionId])
+  @@map("favorites_view")
+}
