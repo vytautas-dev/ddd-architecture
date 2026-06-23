@@ -10,12 +10,11 @@ export class WatchlistRepository implements IWatchlistRepository {
     const events = watchlist.getUncommittedEvents();
     if (events.length === 0) return;
 
-    const currentVersion = await this.getCurrentVersion(watchlist.bidderId);
     await this.eventStore.append(
       "watchlist",
       watchlist.bidderId,
       events,
-      currentVersion,
+      watchlist.version,
     );
   }
 
@@ -24,10 +23,5 @@ export class WatchlistRepository implements IWatchlistRepository {
 
     const events = storedEvents.map((e) => e.payload as WatchlistDomainEvent);
     return Watchlist.reconstitute(bidderId, events);
-  }
-
-  private async getCurrentVersion(bidderId: string): Promise<number> {
-    const storedEvents = await this.eventStore.getStream(bidderId);
-    return storedEvents.length;
   }
 }

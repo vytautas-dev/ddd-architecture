@@ -9,7 +9,7 @@ export class Watchlist {
 
   private favoritedAuctionIds: Set<string> = new Set();
   private uncommittedEvents: WatchlistDomainEvent[] = [];
-  private version: number = 0;
+  private persistedVersion: number = 0;
 
   private constructor() {}
 
@@ -22,7 +22,12 @@ export class Watchlist {
     for (const event of events) {
       watchlist.apply(event);
     }
+    watchlist.persistedVersion = events.length;
     return watchlist;
+  }
+
+  get version(): number {
+    return this.persistedVersion;
   }
 
   favorite(auctionId: string): void {
@@ -63,7 +68,6 @@ export class Watchlist {
         this.favoritedAuctionIds.delete(event.auctionId);
         break;
     }
-    this.version++;
   }
 
   getUncommittedEvents(): WatchlistDomainEvent[] {
