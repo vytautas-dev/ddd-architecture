@@ -15,7 +15,6 @@ export class FavoriteAuctionHandler {
   ) {}
 
   async execute(command: FavoriteAuctionCommand): Promise<void> {
-    // ACL cross-context (decyzja #4): czytamy READ MODEL Auction.
     const auction = await this.prisma.activeAuctionView.findUnique({
       where: { id: command.auctionId },
     });
@@ -30,7 +29,6 @@ export class FavoriteAuctionHandler {
       command.bidderId,
     );
 
-    // Invariant "brak duplikatów" pilnuje domena.
     watchlist.favorite(command.auctionId);
 
     await this.watchlistRepository.save(watchlist);
