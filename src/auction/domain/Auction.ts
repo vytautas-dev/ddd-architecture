@@ -28,9 +28,13 @@ export class Auction {
   public status: AuctionStatus = AuctionStatus.ACTIVE;
 
   private uncommittedEvents: AuctionDomainEvent[] = [];
-  private version: number = 0;
+  private persistedVersion: number = 0;
 
   private constructor() {}
+
+  get version(): number {
+    return this.persistedVersion;
+  }
 
   static create(
     id: string,
@@ -64,6 +68,7 @@ export class Auction {
     for (const event of events) {
       auction.apply(event);
     }
+    auction.persistedVersion = events.length;
     return auction;
   }
 
@@ -157,7 +162,6 @@ export class Auction {
         this.status = AuctionStatus.CANCELLED;
         break;
     }
-    this.version++;
   }
 
   getUncommittedEvents(): AuctionDomainEvent[] {

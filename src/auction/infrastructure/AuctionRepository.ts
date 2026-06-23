@@ -10,22 +10,19 @@ export class AuctionRepository implements IAuctionRepository {
     const events = auction.getUncommittedEvents();
     if (events.length === 0) return;
 
-    const currentVersion = await this.getCurrentVersion(auction.id);
-    await this.eventStore.append("auction", auction.id, events, currentVersion);
+    await this.eventStore.append(
+      "auction",
+      auction.id,
+      events,
+      auction.version,
+    );
   }
 
   async getById(id: string): Promise<Auction | null> {
     const storedEvents = await this.eventStore.getStream(id);
     if (storedEvents.length === 0) return null;
 
-    // Event store hands back the generic DomainEvent; the Auction context
-    // owns the concrete union, so we narrow at this boundary.
     const events = storedEvents.map((e) => e.payload as AuctionDomainEvent);
     return Auction.reconstitute(events);
-  }
-
-  private async getCurrentVersion(auctionId: string): Promise<number> {
-    const storedEvents = await this.eventStore.getStream(auctionId);
-    return storedEvents.length;
   }
 }
