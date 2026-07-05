@@ -1,16 +1,16 @@
-import type { PrismaClient } from "../../../generated/prisma/client";
 import type { DomainEvent } from "../../../shared/domain/DomainEvent";
 import type { IProjection } from "../../../shared/domain/IProjection";
+import type { PrismaUnitOfWork } from "../../../shared/infrastructure/PrismaUnitOfWork";
 import type { AuctionDomainEvent } from "../../domain/AuctionEvents";
 
 export class ActiveAuctionsProjection implements IProjection {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(private readonly uow: PrismaUnitOfWork) {}
 
   async handle(event: DomainEvent): Promise<void> {
     const e = event as AuctionDomainEvent;
     switch (e.eventType) {
       case "AuctionCreated":
-        await this.prisma.activeAuctionView.create({
+        await this.uow.client.activeAuctionView.create({
           data: {
             id: e.auctionId,
             sellerId: e.sellerId,
@@ -25,7 +25,7 @@ export class ActiveAuctionsProjection implements IProjection {
         });
         break;
       case "BidPlaced":
-        await this.prisma.activeAuctionView.update({
+        await this.uow.client.activeAuctionView.update({
           where: { id: e.auctionId },
           data: {
             currentBid: e.amount.amount,
@@ -34,14 +34,14 @@ export class ActiveAuctionsProjection implements IProjection {
         });
         break;
       case "AuctionStarted":
-        await this.prisma.activeAuctionView.update({
+        await this.uow.client.activeAuctionView.update({
           where: { id: e.auctionId },
           data: { status: "ACTIVE" },
         });
         break;
       case "AuctionClosed":
       case "AuctionCancelled":
-        await this.prisma.activeAuctionView.delete({
+        await this.uow.client.activeAuctionView.delete({
           where: { id: e.auctionId },
         });
         break;

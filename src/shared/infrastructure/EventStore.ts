@@ -1,12 +1,12 @@
-import type { PrismaClient } from "../../generated/prisma/client";
 import type { DomainEvent } from "../domain/DomainEvent";
 import type { IEventStore, StoredEvent } from "../domain/IEventStore";
 import type { IProjection } from "../domain/IProjection";
 import { OptimisticConcurrencyError } from "../domain/OptimisticConcurrencyError";
+import type { PrismaUnitOfWork } from "./PrismaUnitOfWork";
 
 export class EventStore implements IEventStore {
   constructor(
-    private readonly prisma: PrismaClient,
+    private readonly uow: PrismaUnitOfWork,
     private readonly projections: Record<string, IProjection[]> = {},
   ) {}
 
@@ -26,7 +26,7 @@ export class EventStore implements IEventStore {
     }));
 
     try {
-      await this.prisma.eventStore.createMany({ data: records });
+      await this.uow.client.eventStore.createMany({ data: records });
     } catch (error) {
       if (this.isUniqueConstraintError(error)) {
         throw new OptimisticConcurrencyError(streamId);
@@ -43,7 +43,7 @@ export class EventStore implements IEventStore {
   }
 
   async getStream(streamId: string): Promise<StoredEvent[]> {
-    const records = await this.prisma.eventStore.findMany({
+    const records = await this.uow.client.eventStore.findMany({
       where: { streamId },
       orderBy: { version: "asc" },
     });

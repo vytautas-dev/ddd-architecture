@@ -2,23 +2,23 @@ import type { IProjection } from "../../../shared/domain/IProjection";
 import type { WatchlistDomainEvent } from "../../domain/WatchlistEvents";
 import type { AuctionDomainEvent } from "../../../auction/domain/AuctionEvents";
 import type { DomainEvent } from "../../../shared/domain/DomainEvent";
-import type { PrismaClient } from "@prisma/client/extension";
+import type { PrismaUnitOfWork } from "../../../shared/infrastructure/PrismaUnitOfWork";
 
 type HandledEvent = AuctionDomainEvent | WatchlistDomainEvent;
 
 export class FavoritesProjection implements IProjection {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(private readonly uow: PrismaUnitOfWork) {}
 
   async handle(event: DomainEvent): Promise<void> {
     const e = event as HandledEvent;
     switch (e.eventType) {
       case "AuctionFavorited": {
-        const auction = await this.prisma.activeAuctionView.findUnique({
+        const auction = await this.uow.client.activeAuctionView.findUnique({
           where: { id: e.auctionId },
         });
         if (!auction) return;
 
-        await this.prisma.favoriteView.upsert({
+        await this.uow.client.favoriteView.upsert({
           where: {
             bidderId_auctionId: {
               bidderId: e.bidderId,
@@ -40,7 +40,7 @@ export class FavoritesProjection implements IProjection {
         break;
       }
       case "AuctionUnfavorited":
-        await this.prisma.favoriteView.delete({
+        await this.uow.client.favoriteView.delete({
           where: {
             bidderId_auctionId: {
               bidderId: e.bidderId,
@@ -50,25 +50,25 @@ export class FavoritesProjection implements IProjection {
         });
         break;
       case "AuctionStarted":
-        await this.prisma.favoriteView.updateMany({
+        await this.uow.client.favoriteView.updateMany({
           where: { auctionId: e.auctionId },
           data: { status: "ACTIVE" },
         });
         break;
       case "BidPlaced":
-        await this.prisma.favoriteView.updateMany({
+        await this.uow.client.favoriteView.updateMany({
           where: { auctionId: e.auctionId },
           data: { currentBid: e.amount.amount },
         });
         break;
       case "AuctionClosed":
-        await this.prisma.favoriteView.updateMany({
+        await this.uow.client.favoriteView.updateMany({
           where: { auctionId: e.auctionId },
           data: { status: "CLOSED" },
         });
         break;
       case "AuctionCancelled":
-        await this.prisma.favoriteView.updateMany({
+        await this.uow.client.favoriteView.updateMany({
           where: { auctionId: e.auctionId },
           data: { status: "CANCELLED" },
         });

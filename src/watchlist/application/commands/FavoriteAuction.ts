@@ -1,8 +1,8 @@
-import type { PrismaClient } from "../../../generated/prisma/client";
 import type { IWatchlistRepository } from "../../domain/IWatchlistRepository";
 import { AuctionNotFoundError } from "../../../auction/domain/AuctionErrors";
 import { AuctionNotUpcomingError } from "../WatchlistApplicationErrors";
 import type { CommandHandler } from "../../../shared/application/CommandHandler";
+import type { PrismaUnitOfWork } from "../../../shared/infrastructure/PrismaUnitOfWork";
 
 export interface FavoriteAuctionCommand {
   bidderId: string;
@@ -14,11 +14,11 @@ export class FavoriteAuctionHandler
 {
   constructor(
     private readonly watchlistRepository: IWatchlistRepository,
-    private readonly prisma: PrismaClient,
+    private readonly uow: PrismaUnitOfWork,
   ) {}
 
   async execute(command: FavoriteAuctionCommand): Promise<void> {
-    const auction = await this.prisma.activeAuctionView.findUnique({
+    const auction = await this.uow.client.activeAuctionView.findUnique({
       where: { id: command.auctionId },
     });
     if (!auction) {

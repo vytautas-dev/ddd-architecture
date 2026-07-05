@@ -15,25 +15,40 @@ import { GetMyFavoritesHandler } from "../application/queries/GetMyFavorites";
 import { AuctionAlreadyFavoritedError } from "../domain/WatchlistErrors";
 import { AuctionNotUpcomingError } from "../application/WatchlistApplicationErrors";
 import { AuctionNotFoundError } from "../../auction/domain/AuctionErrors";
+import { PrismaUnitOfWork } from "../../shared/infrastructure/PrismaUnitOfWork";
+import { withBehaviors } from "../../shared/application/withBehaviors";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-// Buduje ten sam graf obiektów co index.ts (bez serwera HTTP).
+// Buduje ten sam graf obiektów co index.ts (bez serwera HTTP) — łącznie
+// z behaviorami, żeby scenariusze przechodziły przez ścieżkę transakcyjną.
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
 const prisma = new PrismaClient({ adapter });
+const uow = new PrismaUnitOfWork(prisma);
 
-const favoritesProjection = new FavoritesProjection(prisma);
-const eventStore = new EventStore(prisma, {
-  auction: [new ActiveAuctionsProjection(prisma), favoritesProjection],
+const favoritesProjection = new FavoritesProjection(uow);
+const eventStore = new EventStore(uow, {
+  auction: [new ActiveAuctionsProjection(uow), favoritesProjection],
   watchlist: [favoritesProjection],
 });
 const auctionRepository = new AuctionRepository(eventStore);
 const watchlistRepository = new WatchlistRepository(eventStore);
 
-const createAuction = new CreateAuctionHandler(auctionRepository);
-const startAuction = new StartAuctionHandler(auctionRepository);
-const favoriteAuction = new FavoriteAuctionHandler(watchlistRepository, prisma);
-const unfavoriteAuction = new UnfavoriteAuctionHandler(watchlistRepository);
+const createAuction = withBehaviors(new CreateAuctionHandler(auctionRepository), {
+  transaction: uow,
+});
+const startAuction = withBehaviors(new StartAuctionHandler(auctionRepository), {
+  retry: true,
+  transaction: uow,
+});
+const favoriteAuction = withBehaviors(
+  new FavoriteAuctionHandler(watchlistRepository, uow),
+  { retry: true, transaction: uow },
+);
+const unfavoriteAuction = withBehaviors(
+  new UnfavoriteAuctionHandler(watchlistRepository),
+  { retry: true, transaction: uow },
+);
 const getMyFavorites = new GetMyFavoritesHandler(prisma);
 
 async function createScheduledAuction(title = "Vintage chair"): Promise<string> {
