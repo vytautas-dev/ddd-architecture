@@ -5,6 +5,44 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 
 ---
 
+## 2026-07-05 — Learning note: optimistic vs pessimistic locking
+
+**Topic:** how the two concurrency-control strategies differ, and how to pick one per operation.
+
+### Core difference
+- **Optimistic** assumes conflicts are **rare**: act freely, detect the clash **at write time** (version mismatch) → error → retry or report. Never blocks. Zero happy-path cost, scales well under low contention. Fits stateless HTTP and Event Sourcing (stream version is built in).
+- **Pessimistic** assumes conflicts are **likely**: **lock up front** at read time (`SELECT ... FOR UPDATE`), others wait their turn. No conflict happens because the second writer queued. Constant cost per op; risks deadlocks and lower throughput; needs the transaction held open.
+
+| Dimension | Optimistic | Pessimistic |
+|---|---|---|
+| Assumption | conflicts rare | conflicts likely |
+| Blocks? | never (detects at write) | yes (locks at read) |
+| Mechanism | version / timestamp | DB row lock |
+| On conflict | write rejected → retry | second writer just waited |
+| Happy-path cost | zero | constant (everyone pays) |
+| Main risk | wasted work / livelock | deadlock / queuing |
+| Fits stateless + ES | naturally | awkwardly |
+
+### Decision rule (three questions)
+1. Are collisions **frequent** (everyone hits the same row)? → pessimistic (high contention kills retry).
+2. Is **re-running** the operation expensive/dangerous (side effects)? → pessimistic.
+3. Is the op **short** and the system **stateless** (HTTP)? → optimistic.
+
+All three point to optimistic → optimistic. Any strong pessimistic signal (esp. money or a uniquely physical resource) → consider a lock.
+
+### Real-world examples
+- **Optimistic:** editing your profile/settings; wiki & shared docs (Confluence — can't hold a lock for 10 min of editing); shopping cart edits; Jira/Linear tickets; **BidFlow bidding**.
+- **Pessimistic:** bank transfers / account balance (no risk of double-spend); reserving a specific seat (cinema/flight — one physical 14C); last item in a flash sale (high contention → optimistic would livelock); invoice-number sequence generator; batch jobs that must not run twice.
+
+### Key intuition
+> Money and physically-unique resources (this seat, this last unit) → usually **pessimistic**.
+> "My own" or rarely-shared data (profile, doc, ticket, auction bid) → usually **optimistic**.
+> Many real systems are **hybrid** — catalog & cart optimistic, final stock decrement pessimistic. Choose **per operation**, not per app.
+
+Mnemonic: optimistic = "act and apologize if needed" (detect at write); pessimistic = "ask permission up front" (lock at read).
+
+---
+
 ## 2026-07-05 — Concurrency control: retry + behaviors decorator
 
 **Topic:** optimistic concurrency control and a retry mechanism as a cross-cutting concern.
