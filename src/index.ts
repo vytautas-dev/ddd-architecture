@@ -18,6 +18,7 @@ import { FavoritesProjection } from "./watchlist/infrastructure/projections/Favo
 import { FavoriteAuctionHandler } from "./watchlist/application/commands/FavoriteAuction";
 import { UnfavoriteAuctionHandler } from "./watchlist/application/commands/UnfavoriteAuction";
 import { GetMyFavoritesHandler } from "./watchlist/application/queries/GetMyFavorites";
+import { withBehaviors } from "./shared/application/withBehaviors";
 
 // Infrastructure
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
@@ -31,19 +32,31 @@ const eventStore = new EventStore(prisma, {
 const auctionRepository = new AuctionRepository(eventStore);
 const watchlistRepository = new WatchlistRepository(eventStore);
 
-// Command Handlers
+// Command Handlers — mutating commands run under { retry: true }, so a lost
+// optimistic-concurrency race replays the whole command against fresh state.
+// CreateAuction opens a fresh stream (version 0) → no conflict to retry.
 export const createAuctionHandler = new CreateAuctionHandler(auctionRepository);
-export const startAuctionHandler = new StartAuctionHandler(auctionRepository);
-export const placeBidHandler = new PlaceBidHandler(auctionRepository);
-export const cancelAuctionHandler = new CancelAuctionHandler(auctionRepository);
+export const startAuctionHandler = withBehaviors(
+  new StartAuctionHandler(auctionRepository),
+  { retry: true },
+);
+export const placeBidHandler = withBehaviors(
+  new PlaceBidHandler(auctionRepository),
+  { retry: true },
+);
+export const cancelAuctionHandler = withBehaviors(
+  new CancelAuctionHandler(auctionRepository),
+  { retry: true },
+);
 export const getActiveAuctionsHandler = new GetActiveAuctionsHandler(prisma);
 
-export const favoriteAuctionHandler = new FavoriteAuctionHandler(
-  watchlistRepository,
-  prisma,
+export const favoriteAuctionHandler = withBehaviors(
+  new FavoriteAuctionHandler(watchlistRepository, prisma),
+  { retry: true },
 );
-export const unfavoriteAuctionHandler = new UnfavoriteAuctionHandler(
-  watchlistRepository,
+export const unfavoriteAuctionHandler = withBehaviors(
+  new UnfavoriteAuctionHandler(watchlistRepository),
+  { retry: true },
 );
 export const getMyFavoritesHandler = new GetMyFavoritesHandler(prisma);
 

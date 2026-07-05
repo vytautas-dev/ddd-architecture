@@ -2,14 +2,16 @@ import type { PrismaClient } from "../../../generated/prisma/client";
 import type { IWatchlistRepository } from "../../domain/IWatchlistRepository";
 import { AuctionNotFoundError } from "../../../auction/domain/AuctionErrors";
 import { AuctionNotUpcomingError } from "../WatchlistApplicationErrors";
-import { retryOnConcurrencyConflict } from "../../../shared/application/retryOnConcurrencyConflict";
+import type { CommandHandler } from "../../../shared/application/CommandHandler";
 
 export interface FavoriteAuctionCommand {
   bidderId: string;
   auctionId: string;
 }
 
-export class FavoriteAuctionHandler {
+export class FavoriteAuctionHandler
+  implements CommandHandler<FavoriteAuctionCommand>
+{
   constructor(
     private readonly watchlistRepository: IWatchlistRepository,
     private readonly prisma: PrismaClient,
@@ -26,14 +28,12 @@ export class FavoriteAuctionHandler {
       throw new AuctionNotUpcomingError();
     }
 
-    await retryOnConcurrencyConflict(async () => {
-      const watchlist = await this.watchlistRepository.getByBidderId(
-        command.bidderId,
-      );
+    const watchlist = await this.watchlistRepository.getByBidderId(
+      command.bidderId,
+    );
 
-      watchlist.favorite(command.auctionId);
+    watchlist.favorite(command.auctionId);
 
-      await this.watchlistRepository.save(watchlist);
-    });
+    await this.watchlistRepository.save(watchlist);
   }
 }

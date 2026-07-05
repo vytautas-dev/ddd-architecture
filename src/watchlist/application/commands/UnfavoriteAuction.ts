@@ -1,22 +1,22 @@
 import type { IWatchlistRepository } from "../../domain/IWatchlistRepository";
-import { retryOnConcurrencyConflict } from "../../../shared/application/retryOnConcurrencyConflict";
+import type { CommandHandler } from "../../../shared/application/CommandHandler";
 
 export interface UnfavoriteAuctionCommand {
   bidderId: string;
   auctionId: string;
 }
 
-export class UnfavoriteAuctionHandler {
+export class UnfavoriteAuctionHandler
+  implements CommandHandler<UnfavoriteAuctionCommand>
+{
   constructor(private readonly watchlistRepository: IWatchlistRepository) {}
 
   async execute(command: UnfavoriteAuctionCommand): Promise<void> {
-    await retryOnConcurrencyConflict(async () => {
-      const watchlist = await this.watchlistRepository.getByBidderId(
-        command.bidderId,
-      );
+    const watchlist = await this.watchlistRepository.getByBidderId(
+      command.bidderId,
+    );
 
-      watchlist.unfavorite(command.auctionId);
-      await this.watchlistRepository.save(watchlist);
-    });
+    watchlist.unfavorite(command.auctionId);
+    await this.watchlistRepository.save(watchlist);
   }
 }
