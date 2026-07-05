@@ -2,13 +2,7 @@ import type { PrismaClient } from "../../generated/prisma/client";
 import type { DomainEvent } from "../domain/DomainEvent";
 import type { IEventStore, StoredEvent } from "../domain/IEventStore";
 import type { IProjection } from "../domain/IProjection";
-
-export class OptimisticConcurrencyError extends Error {
-  constructor(streamId: string) {
-    super(`Concurrency conflict on stream: ${streamId}`);
-    this.name = "OptimisticConcurrencyError";
-  }
-}
+import { OptimisticConcurrencyError } from "../domain/OptimisticConcurrencyError";
 
 export class EventStore implements IEventStore {
   constructor(

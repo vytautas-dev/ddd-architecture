@@ -2,6 +2,7 @@ import type { PrismaClient } from "../../../generated/prisma/client";
 import type { IWatchlistRepository } from "../../domain/IWatchlistRepository";
 import { AuctionNotFoundError } from "../../../auction/domain/AuctionErrors";
 import { AuctionNotUpcomingError } from "../WatchlistApplicationErrors";
+import { retryOnConcurrencyConflict } from "../../../shared/application/retryOnConcurrencyConflict";
 
 export interface FavoriteAuctionCommand {
   bidderId: string;
@@ -25,12 +26,14 @@ export class FavoriteAuctionHandler {
       throw new AuctionNotUpcomingError();
     }
 
-    const watchlist = await this.watchlistRepository.getByBidderId(
-      command.bidderId,
-    );
+    await retryOnConcurrencyConflict(async () => {
+      const watchlist = await this.watchlistRepository.getByBidderId(
+        command.bidderId,
+      );
 
-    watchlist.favorite(command.auctionId);
+      watchlist.favorite(command.auctionId);
 
-    await this.watchlistRepository.save(watchlist);
+      await this.watchlistRepository.save(watchlist);
+    });
   }
 }

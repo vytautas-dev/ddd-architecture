@@ -8,7 +8,7 @@ import {
   AuctionNotScheduledError,
   AuctionNotStartedError,
 } from "../domain/AuctionErrors";
-import { OptimisticConcurrencyError } from "../../shared/infrastructure/EventStore";
+import { OptimisticConcurrencyError } from "../../shared/domain/OptimisticConcurrencyError";
 import {
   AuctionAlreadyFavoritedError,
   AuctionNotFavoritedError,
