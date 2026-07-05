@@ -93,7 +93,9 @@ src/
 - **CQRS** — commands (favorite/unfavorite/start) separated from queries (read from denormalized views only).
 - **Read Models / Projections** — `ActiveAuctionsProjection` + `FavoritesProjection` (the latter consumes events from BOTH contexts).
 
-Parked: aggregate `version`/optimistic-concurrency not fully wired; keyset pagination for `GetMyFavorites` deferred; `X-User-Id` is a placeholder for a future Identity context.
+**Concurrency control — DONE.** Optimistic concurrency is fully wired in both contexts: the aggregate keeps `persistedVersion` (the version at load time), the event store enforces `@@unique([streamId, version])`, and a `P2002` conflict surfaces as `OptimisticConcurrencyError`. On top of that, a **retry** behavior replays the whole command against fresh state on conflict. Retry is applied declaratively as a **decorator** at wiring time — `withBehaviors(handler, { retry: true })` in `index.ts` — so handlers stay pure (no retry boilerplate inside them). All mutating commands (place-bid/cancel/start/favorite/unfavorite) run under `{ retry: true }`; `CreateAuction` opens a fresh stream so it needs none. Reusable pieces live in `shared/application/` (`CommandHandler`, `withBehaviors`, `retryOnConcurrencyConflict`).
+
+Parked: `withTransaction` behavior (the seam exists in `withBehaviors`, but it needs a Unit of Work — tx-scoped repositories — since repos are currently singletons); keyset pagination for `GetMyFavorites` deferred; `X-User-Id` is a placeholder for a future Identity context.
 
 Update this section when a stage is completed.
 
