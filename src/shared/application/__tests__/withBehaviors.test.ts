@@ -4,13 +4,14 @@ import type { IUnitOfWork } from "../IUnitOfWork";
 import { OptimisticConcurrencyError } from "../../domain/OptimisticConcurrencyError";
 
 function makeFakeUow(): IUnitOfWork & { transactionsOpened: number } {
-  return {
+  const uow = {
     transactionsOpened: 0,
     async run<T>(fn: () => Promise<T>): Promise<T> {
-      this.transactionsOpened++;
+      uow.transactionsOpened++;
       return fn();
     },
   };
+  return uow;
 }
 
 describe("withBehaviors", () => {
