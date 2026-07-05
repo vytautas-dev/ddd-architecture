@@ -36,7 +36,7 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 - `~ src/index.ts` (wired via `withBehaviors({ retry: true })`)
 
 ### Documentation
-- Updated: `CLAUDE.md` (Current Stage → concurrency DONE), `WYMAGANIE_1_PRZEGLAD.md` (Step 6 + patterns table).
+- Updated: `CLAUDE.md` (Current Stage → concurrency DONE).
 - To consider (flagged, untouched): `ABOUT.md` is stale (predates the Watchlist context); `DOMAIN_REVIEW.md` question #7 is effectively resolved.
 
 ### Status
