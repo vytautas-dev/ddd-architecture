@@ -5,6 +5,83 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 
 ---
 
+## 2026-07-05 — Learning note: transaction boundaries — endpoints, projections, queries
+
+**Topic:** three follow-up questions after wiring the Unit of Work: (1) what if one endpoint calls several handlers (each opens its own transaction)? (2) do projections need transactions? (3) do queries (GETs) need them?
+
+### 1. Endpoint calling multiple handlers → design smell, not a missing feature
+- CQRS invariant: **one request → one command → one handler → one aggregate → one transaction.** Vernon's rule: *aggregate boundary = consistency boundary = transaction boundary* — the domain model draws the line, not the endpoint.
+- The urge to call two handlers from one endpoint signals either: (a) it's really **one business intention** → model it as one command (maybe the aggregate boundaries are wrong), or (b) it's a **process spanning aggregates** → eventual consistency via events (we already do this: `FavoritesProjection` reacts to Auction events — no cross-context transaction).
+- Technically today: each `withBehaviors({ transaction: uow })` handler opens its own tx. Wrapping two handlers in an outer `uow.run()` would NOT work:
+  - our `run()` is **not reentrant** — a nested `$transaction` opens an *independent* tx on another connection (Spring vocabulary: we have `REQUIRES_NEW` semantics, composing would need `REQUIRED` = "join if present") + deadlock risk (outer tx holds locks the inner one waits for);
+  - **retry breaks**: a `P2002` inside an outer tx aborts the WHOLE Postgres transaction (no further statements allowed) — retry inside it would write into a dead tx. Retry boundary must equal transaction boundary must equal consistency boundary.
+- The real-world answer for multi-aggregate processes: **Saga / Process Manager** — a sequence of local transactions linked by events, with **compensating actions** instead of rollback (cancel the flight, don't pretend it never happened). Future stage, needs async event handling first.
+
+### 2. Do projections need transactions? Depends WHOSE transaction
+- **Ours today (synchronous projections): yes, the command's tx** — we have no replay mechanism, so a lost view update would be permanent. The price (named!): **a buggy projection fails the command** — read side can take down write side. Acceptable here; the main reason production systems go async.
+- **Target ES architecture (async projections): not the command's tx** — but they still need their own consistency story, one of:
+  | Strategy | How | Cost |
+  |---|---|---|
+  | own small tx | update view + save **checkpoint** atomically | local transaction per batch |
+  | idempotency | re-applying the same event is harmless → at-least-once delivery suffices | must audit every handler |
+- Idempotency audit of our own code: `AuctionStarted → update {status}` idempotent ✅; `AuctionFavorited → upsert` idempotent ✅; `BidPlaced → totalBids: {increment: 1}` **NOT idempotent** ❌ (double-apply counts twice) — first thing to fix when we go async; `AuctionCreated → create` throws on duplicate (handle-able).
+
+### 3. Do queries need transactions? No — and it's CQRS working as designed
+- Queries write nothing (nothing to roll back) and never hit version conflicts (retry pointless) → that's why GET handlers are not wrapped in `withBehaviors` at all.
+- A single `SELECT` already runs on a consistent snapshot (implicit per-statement transaction in Postgres). Our queries are one `findMany` on one denormalized table — **by design**: projections do the hard joining work at write time so reads are flat.
+- If a query ever needed several tables read consistently → smell: reshape the read model (new projection), don't add transactions. Legitimate read-tx cases: multi-SELECT snapshot exports (`REPEATABLE READ`), or read-before-write — but that's a command (`FavoriteAuctionHandler` reads via `uow.client` for exactly this reason).
+- Wiring as documentation: query handlers deliberately receive raw `prisma` (not `uow`) — the signature says *"never participates in transactions."*
+
+### Key intuition
+> A transaction is not a glue for operations — it's the **expression of a consistency boundary**, and that boundary is drawn by the domain model (the aggregate), not by the endpoint.
+> Projections don't need *the command's* transaction — they need **replayability** (checkpoint+tx, or idempotency); borrowing the command's tx is just our simplest way to get it today.
+> Commands coordinate many writes → tx. Queries in CQRS make one read from one table → the DB's snapshot already covers them.
+
+---
+
+## 2026-07-05 — Transactions (atomicity): Unit of Work via AsyncLocalStorage + `transaction` behavior
+
+**Topic:** atomic commit of events + projections — the deferred `withTransaction` behavior, unblocked by the Unit of Work pattern.
+
+### The problem
+`EventStore.append` did `createMany(events)` and then ran projections as **separate DB ops on separate connections**. Crash (or projection bug) after the event insert → event store says "bid 150", views say "bid 100", **forever** (no replay mechanism exists). Also: multiple events per command updated views partially, and two projections for one event could diverge from each other.
+
+What was already atomic: `createMany` itself (single statement), and every handler saves **one aggregate** (no cross-aggregate atomicity needed — by design).
+
+### The blocker and the pattern
+Repos/EventStore/projections are **singletons** with a baked-in `PrismaClient`; a Prisma interactive transaction hands you a `tx` client that somehow must reach all of them for one command only — without polluting `IEventStore`/`IProjection` signatures (domain purity). Solution: **Unit of Work** carried by **`AsyncLocalStorage`** (Node's thread-local for async chains: context is attached to *causality* — whatever an execution schedules inherits its context — so concurrent requests never see each other's value despite one thread).
+
+### What we did
+- **`PrismaUnitOfWork`** (`shared/infrastructure/`): `run(fn)` = `prisma.$transaction(tx => als.run(tx, fn))`; `client` getter = `getStore() ?? prisma` (tx inside `run()`, singleton fallback outside → non-transactional code untouched). Typed as `Prisma.TransactionClient` so nobody can call `$transaction` through it (API that makes the mistake impossible > comment).
+- **`IUnitOfWork` port** in `shared/application/` — `withBehaviors` never imports Prisma (Dependency Inversion).
+- **`EventStore` + both projections + `FavoriteAuctionHandler`** switched to `uow.client` — zero interface changes. (Also fixed FavoritesProjection's wrong `@prisma/client/extension` import.)
+- **`withBehaviors` gained `transaction: IUnitOfWork`** — order enforced & tested: **retry wraps transaction** (a conflict aborts the whole PG tx, so each attempt needs a fresh one).
+- **Wiring:** all mutating commands run `{ retry: true, transaction: uow }`; `CreateAuction` gets `{ transaction: uow }` only (fresh stream — nothing to conflict with, but still needs atomicity).
+- **Proof:** `atomicity.integration.test.ts` with a saboteur projection registered *before* `ActiveAuctionsProjection` — 3 tests: success commits event+view together; with tx a projection failure rolls back the event; **without tx the same failure leaves event persisted + view stale** (the test documents the bug we fixed).
+
+### Pitfall found: parallel Jest workers vs shared DB
+First run looked like rollback was broken — it wasn't. Jest runs test **files** in parallel workers; both integration files `TRUNCATE` the same tables, so one wiped the other mid-flight (clue: a test doing exactly what the failing fragment did was passing). Fix: `maxWorkers: 1` in `jest.config.ts` + atomicity assertions scoped to the specific `streamId` instead of global `count()`. Lesson: integration tests sharing a DB must be serialized or data-isolated.
+
+### New / changed files
+- `+ src/shared/infrastructure/PrismaUnitOfWork.ts` (+ 4 unit tests, fake `$transaction`, ALS context survival across event-loop hops + concurrent-run isolation)
+- `+ src/shared/application/IUnitOfWork.ts`
+- `+ src/shared/application/__tests__/withBehaviors.test.ts` (fresh tx per retry attempt)
+- `+ src/shared/infrastructure/__tests__/atomicity.integration.test.ts`
+- `~ EventStore, ActiveAuctionsProjection, FavoritesProjection, FavoriteAuction` (→ `uow.client`)
+- `~ withBehaviors` (`transaction` behavior), `~ index.ts` (wiring), `~ favorites.integration.test.ts` (mirrors prod wiring incl. behaviors), `~ jest.config.ts` (`maxWorkers: 1`)
+
+### Deliberately deferred
+- **Async projections** (catch-up subscription + checkpoints) — would replace transactional projections with eventual consistency; next big stage.
+- Interactive-transaction timeout is Prisma's default (~5 s) — fine for two projections, revisit if projections grow.
+
+### Documentation
+- Updated: `CLAUDE.md` (Current Stage → transactions DONE; parked list now leads with async projections).
+
+### Status
+Typecheck clean. Tests: **59 green** (incl. integration). Lint: no new errors (17 pre-existing).
+
+---
+
 ## 2026-07-05 — Learning note: transaction isolation & MVCC vs our version counter
 
 **Topic:** what DB transaction isolation actually is, how PostgreSQL's MVCC relates to our optimistic concurrency, and why we don't need it as a guard. (Prompted by mentor: read PostgreSQL docs ch. 13.2.)
