@@ -12,8 +12,9 @@ import { OptimisticConcurrencyError } from "../../shared/domain/OptimisticConcur
 import {
   AuctionAlreadyFavoritedError,
   AuctionNotFavoritedError,
+  AuctionNotUpcomingError,
+  AuctionToFavoriteNotFoundError,
 } from "../../watchlist/domain/WatchlistErrors";
-import { AuctionNotUpcomingError } from "../../watchlist/application/WatchlistApplicationErrors";
 
 type DomainErrorClass = new (...args: never[]) => Error;
 
@@ -28,6 +29,7 @@ const errorStatusMap: ReadonlyArray<[DomainErrorClass, number]> = [
   [AuctionNotStartedError, 409],
   [AuctionAlreadyFavoritedError, 409],
   [AuctionNotFavoritedError, 404],
+  [AuctionToFavoriteNotFoundError, 404],
   [AuctionNotUpcomingError, 422],
 ];
 

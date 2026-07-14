@@ -14,6 +14,7 @@ import { watchlistRouter } from "./watchlist/api/watchlistRouter";
 import { domainErrorHandler } from "./auction/api/errorHandler";
 import { StartAuctionHandler } from "./auction/application/commands/StartAuction";
 import { WatchlistRepository } from "./watchlist/infrastructure/WatchlistRepository";
+import { ReadModelAuctionCatalog } from "./watchlist/infrastructure/ReadModelAuctionCatalog";
 import { FavoritesProjection } from "./watchlist/infrastructure/projections/FavoritesProjection";
 import { FavoriteAuctionHandler } from "./watchlist/application/commands/FavoriteAuction";
 import { UnfavoriteAuctionHandler } from "./watchlist/application/commands/UnfavoriteAuction";
@@ -33,6 +34,7 @@ const eventStore = new EventStore(uow, {
 });
 const auctionRepository = new AuctionRepository(eventStore);
 const watchlistRepository = new WatchlistRepository(eventStore);
+const auctionCatalog = new ReadModelAuctionCatalog(uow);
 
 export const createAuctionHandler = withBehaviors(
   new CreateAuctionHandler(auctionRepository),
@@ -53,7 +55,7 @@ export const cancelAuctionHandler = withBehaviors(
 export const getActiveAuctionsHandler = new GetActiveAuctionsHandler(prisma);
 
 export const favoriteAuctionHandler = withBehaviors(
-  new FavoriteAuctionHandler(watchlistRepository, uow),
+  new FavoriteAuctionHandler(watchlistRepository, auctionCatalog),
   { retry: true, transaction: uow },
 );
 export const unfavoriteAuctionHandler = withBehaviors(

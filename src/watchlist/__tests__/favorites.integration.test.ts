@@ -8,13 +8,16 @@ import { ActiveAuctionsProjection } from "../../auction/infrastructure/projectio
 import { CreateAuctionHandler } from "../../auction/application/commands/CreateAuction";
 import { StartAuctionHandler } from "../../auction/application/commands/StartAuction";
 import { WatchlistRepository } from "../infrastructure/WatchlistRepository";
+import { ReadModelAuctionCatalog } from "../infrastructure/ReadModelAuctionCatalog";
 import { FavoritesProjection } from "../infrastructure/projections/FavoritesProjection";
 import { FavoriteAuctionHandler } from "../application/commands/FavoriteAuction";
 import { UnfavoriteAuctionHandler } from "../application/commands/UnfavoriteAuction";
 import { GetMyFavoritesHandler } from "../application/queries/GetMyFavorites";
-import { AuctionAlreadyFavoritedError } from "../domain/WatchlistErrors";
-import { AuctionNotUpcomingError } from "../application/WatchlistApplicationErrors";
-import { AuctionNotFoundError } from "../../auction/domain/AuctionErrors";
+import {
+  AuctionAlreadyFavoritedError,
+  AuctionNotUpcomingError,
+  AuctionToFavoriteNotFoundError,
+} from "../domain/WatchlistErrors";
 import { PrismaUnitOfWork } from "../../shared/infrastructure/PrismaUnitOfWork";
 import { withBehaviors } from "../../shared/application/withBehaviors";
 
@@ -33,6 +36,7 @@ const eventStore = new EventStore(uow, {
 });
 const auctionRepository = new AuctionRepository(eventStore);
 const watchlistRepository = new WatchlistRepository(eventStore);
+const auctionCatalog = new ReadModelAuctionCatalog(uow);
 
 const createAuction = withBehaviors(new CreateAuctionHandler(auctionRepository), {
   transaction: uow,
@@ -42,7 +46,7 @@ const startAuction = withBehaviors(new StartAuctionHandler(auctionRepository), {
   transaction: uow,
 });
 const favoriteAuction = withBehaviors(
-  new FavoriteAuctionHandler(watchlistRepository, uow),
+  new FavoriteAuctionHandler(watchlistRepository, auctionCatalog),
   { retry: true, transaction: uow },
 );
 const unfavoriteAuction = withBehaviors(
@@ -114,7 +118,7 @@ describe("Favorites — integration (path through handlers + DB)", () => {
   it("rejects favoriting a non-existent auction", async () => {
     await expect(
       favoriteAuction.execute({ bidderId: uuid(), auctionId: uuid() }),
-    ).rejects.toThrow(AuctionNotFoundError);
+    ).rejects.toThrow(AuctionToFavoriteNotFoundError);
   });
 
   it("rejects favoriting the same auction twice", async () => {
