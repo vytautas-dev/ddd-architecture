@@ -16,6 +16,7 @@ import { StartAuctionHandler } from "./auction/application/commands/StartAuction
 import { WatchlistRepository } from "./watchlist/infrastructure/WatchlistRepository";
 import { ReadModelAuctionCatalog } from "./watchlist/infrastructure/ReadModelAuctionCatalog";
 import { FavoritesProjection } from "./watchlist/infrastructure/projections/FavoritesProjection";
+import { AuctionCatalogProjection } from "./watchlist/infrastructure/projections/AuctionCatalogProjection";
 import { FavoriteAuctionHandler } from "./watchlist/application/commands/FavoriteAuction";
 import { UnfavoriteAuctionHandler } from "./watchlist/application/commands/UnfavoriteAuction";
 import { GetMyFavoritesHandler } from "./watchlist/application/queries/GetMyFavorites";
@@ -28,8 +29,13 @@ const prisma = new PrismaClient({ adapter });
 const uow = new PrismaUnitOfWork(prisma);
 const activeAuctionsProjection = new ActiveAuctionsProjection(uow);
 const favoritesProjection = new FavoritesProjection(uow);
+const auctionCatalogProjection = new AuctionCatalogProjection(uow);
 const eventStore = new EventStore(uow, {
-  auction: [activeAuctionsProjection, favoritesProjection],
+  auction: [
+    activeAuctionsProjection,
+    auctionCatalogProjection,
+    favoritesProjection,
+  ],
   watchlist: [favoritesProjection],
 });
 const auctionRepository = new AuctionRepository(eventStore);

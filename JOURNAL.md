@@ -5,6 +5,54 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 
 ---
 
+## 2026-07-28 — Watchlist owns its auction read model (and why that was the fix)
+
+**Topic:** the Watchlist read `active_auctions_view` — a read model owned by the *Auction* context — to decide whether an auction can be favorited. A mentor suggested a separate read model. He was right.
+
+### The problem
+1. **Naming** — `getSnapshot()`; in ES a *snapshot* is serialized aggregate state, this was a read-model query.
+2. **Coupling to a private table** — the contract between contexts is the **Published Language** (events), never another context's tables.
+3. **A real bug** — `ActiveAuctionsProjection` **deletes** the row on `Closed`/`Cancelled` (correct for *its* question). The Watchlist read the missing row as "does not exist" and returned 404 for a cancelled auction. An implementation detail of one context's projection leaked out as a wrong domain error in another.
+
+### Why a *separate* read model was the answer
+Both views are built from the **same events** but encode **different truths**:
+
+| | `active_auctions_view` | `watchlist_auction_catalog_view` |
+|---|---|---|
+| Question | "what is on sale now?" | "what do I know about this auction?" |
+| `AuctionCancelled` | `delete` — it's gone | `update status` — it changed state |
+| Owner | Auction | Watchlist |
+
+There is no "auctions table" — there are as many projections as there are questions. Reusing one view for a second question forces that question to inherit the first one's semantics, and *that* was the bug. Cost: a third copy of auction data. That is the price of context autonomy, and it is correct.
+
+### What we did
+- `+ WatchlistAuctionCatalog` — only fields the Watchlist asks about; **never deletes** (`Closed`/`Cancelled` → status update), fed by `+ AuctionCatalogProjection` on `streamType: "auction"`.
+- **ACL now translates instead of forwarding**: `AuctionSnapshot { exists, status }` → `AuctionForFavoriting { exists, isUpcoming }`, `getSnapshot` → `findForFavoriting`. The aggregate no longer knows what `"SCHEDULED"` means; the *rule* ("only upcoming can be favorited") stays in the aggregate, only the *vocabulary translation* moved out.
+- `FavoritesProjection` reads the Watchlist catalog; its silent `if (!auction) return` became `findUniqueOrThrow`. A projection handles facts that already happened — `AuctionFavorited` is only emitted after the handler validated against the same catalog in the same tx, so a missing row is a **broken invariant**. `return` = silent permanent data loss; `throw` rolls back the command. **Caveat: once projections go async a throw becomes a poison message — needs retry + dead-letter first.**
+- Regression test added and **verified to have teeth** (pointed the ACL back at the old table → it failed with `AuctionToFavoriteNotFoundError`).
+- Collateral: both integration tests `TRUNCATE` a hardcoded table list that missed the new table; `favorites.integration.test.ts` builds its own object graph and had to learn the new projection.
+
+### Side quest: a new projection starts empty
+How rebuilds are done in practice — **a dedicated script is the entry-level rung, not the only option**: truncate + reprocess (simplest, downtime) · checkpoint reset (Marten `RebuildProjectionAsync` via code *or CLI*, Axon `resetTokens()`, EventStoreDB checkpoint reset) · blue-green (build v2, replay, switch reads — zero downtime, double storage). Batch + record progress so a replay can resume. **Snapshots do not help here** — they serve aggregate rehydration; a read model needs full history.
+
+**A rebuild is not a migration.** Migrations are SQL, immutable, run once; a replay runs projection *code* and must be repeatable (bug → fix → replay again). A read model in ES is a **cache**: you don't migrate a cache, you rebuild it.
+
+### Key intuition
+> Depend on other contexts' **events**, never on their **tables**.
+> The ACL earns its place by **translating vocabulary**, not by wrapping a query — if it only forwarded rows it would be a useless layer.
+> Query side (no domain decision) → read the view directly, no port. Command side (value feeds an aggregate decision) → port + ACL.
+
+### Deliberately deferred
+- **Step 5** — slim `favorites_view` to `(bidderId, auctionId, favoritedAt)` + join to the catalog. Kills write fan-out (`BidPlaced` does `updateMany` across every watcher's row → one row) and lets `FavoritesProjection` drop Auction events entirely. Trade-off: filtering/ordering move to the joined table, so the `(bidderId, startsAt, auctionId)` covering index no longer applies.
+- Replay script (only three local auctions; returns naturally with checkpoints) · unit test for `AuctionCatalogProjection` · wiring duplicated between `index.ts` and the integration test · tests `TRUNCATE` the **dev** DB, so a separate `DATABASE_URL_TEST` is the next cleanup · no compose file in the repo · `prisma migrate dev` does not regenerate the client.
+
+### Status
+Typecheck clean, 62 tests green. Verified against the running API: cancelled auction → `422 "Only upcoming (scheduled) auctions..."` instead of `404`; non-existent → still `404`. **Zero references to `activeAuctionView` outside `src/auction/`** (bar assertions in the shared atomicity test).
+
+New/changed: `+ AuctionCatalogProjection`, `+ migration 20260728181517`, `~ schema.prisma`, `~ IAuctionCatalog`, `~ ReadModelAuctionCatalog`, `~ Watchlist(+test)`, `~ FavoriteAuction`, `~ FavoritesProjection`, `~ index.ts`, `~ both integration tests`.
+
+---
+
 ## 2026-07-05 — Learning note: transaction boundaries — endpoints, projections, queries
 
 **Topic:** three follow-up questions after wiring the Unit of Work: (1) what if one endpoint calls several handlers (each opens its own transaction)? (2) do projections need transactions? (3) do queries (GETs) need them?

@@ -1,8 +1,8 @@
-import type { IProjection } from "../../../shared/domain/IProjection";
-import type { WatchlistDomainEvent } from "../../domain/WatchlistEvents";
 import type { AuctionDomainEvent } from "../../../auction/domain/AuctionEvents";
 import type { DomainEvent } from "../../../shared/domain/DomainEvent";
+import type { IProjection } from "../../../shared/domain/IProjection";
 import type { PrismaUnitOfWork } from "../../../shared/infrastructure/PrismaUnitOfWork";
+import type { WatchlistDomainEvent } from "../../domain/WatchlistEvents";
 
 type HandledEvent = AuctionDomainEvent | WatchlistDomainEvent;
 
@@ -13,10 +13,10 @@ export class FavoritesProjection implements IProjection {
     const e = event as HandledEvent;
     switch (e.eventType) {
       case "AuctionFavorited": {
-        const auction = await this.uow.client.activeAuctionView.findUnique({
-          where: { id: e.auctionId },
-        });
-        if (!auction) return;
+        const auction =
+          await this.uow.client.watchlistAuctionCatalog.findUniqueOrThrow({
+            where: { auctionId: e.auctionId },
+          });
 
         await this.uow.client.favoriteView.upsert({
           where: {

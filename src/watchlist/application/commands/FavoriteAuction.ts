@@ -1,6 +1,6 @@
-import type { IWatchlistRepository } from "../../domain/IWatchlistRepository";
-import type { IAuctionCatalog } from "../../domain/IAuctionCatalog";
 import type { CommandHandler } from "../../../shared/application/CommandHandler";
+import type { IAuctionCatalog } from "../../domain/IAuctionCatalog";
+import type { IWatchlistRepository } from "../../domain/IWatchlistRepository";
 
 export interface FavoriteAuctionCommand {
   bidderId: string;
@@ -16,7 +16,9 @@ export class FavoriteAuctionHandler
   ) {}
 
   async execute(command: FavoriteAuctionCommand): Promise<void> {
-    const auction = await this.auctionCatalog.getSnapshot(command.auctionId);
+    const auction = await this.auctionCatalog.findForFavoriting(
+      command.auctionId,
+    );
 
     const watchlist = await this.watchlistRepository.getByBidderId(
       command.bidderId,

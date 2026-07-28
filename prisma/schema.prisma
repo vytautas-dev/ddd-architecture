@@ -36,6 +36,18 @@ model ActiveAuctionView {
   @@map("active_auctions_view")
 }
 
+model WatchlistAuctionCatalog {
+  auctionId  String   @id
+  title      String
+  status     String
+  currentBid Float?
+  currency   String
+  startsAt   DateTime
+  updatedAt  DateTime @updatedAt
+
+  @@map("watchlist_auction_catalog_view")
+}
+
 model FavoriteView {
   bidderId    String
   auctionId   String

@@ -1,14 +1,14 @@
 import "dotenv/config";
 import { randomUUID as uuid } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "../../../generated/prisma/client";
-import { EventStore } from "../EventStore";
-import { PrismaUnitOfWork } from "../PrismaUnitOfWork";
-import { withBehaviors } from "../../application/withBehaviors";
-import type { IProjection } from "../../domain/IProjection";
+import { CreateAuctionHandler } from "../../../auction/application/commands/CreateAuction";
 import { AuctionRepository } from "../../../auction/infrastructure/AuctionRepository";
 import { ActiveAuctionsProjection } from "../../../auction/infrastructure/projections/ActiveAuctionsProjection";
-import { CreateAuctionHandler } from "../../../auction/application/commands/CreateAuction";
+import { PrismaClient } from "../../../generated/prisma/client";
+import { withBehaviors } from "../../application/withBehaviors";
+import type { IProjection } from "../../domain/IProjection";
+import { EventStore } from "../EventStore";
+import { PrismaUnitOfWork } from "../PrismaUnitOfWork";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -44,7 +44,7 @@ function createAuctionCommand() {
 
 beforeEach(async () => {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "event_store", "active_auctions_view", "favorites_view"',
+    'TRUNCATE TABLE "event_store", "active_auctions_view", "favorites_view", "watchlist_auction_catalog_view"',
   );
 });
 
