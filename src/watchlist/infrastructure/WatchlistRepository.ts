@@ -1,7 +1,7 @@
+import type { IEventStore } from "../../shared/domain/IEventStore";
+import type { IWatchlistRepository } from "../domain/IWatchlistRepository";
 import { Watchlist } from "../domain/Watchlist";
 import type { WatchlistDomainEvent } from "../domain/WatchlistEvents";
-import type { IWatchlistRepository } from "../domain/IWatchlistRepository";
-import type { IEventStore } from "../../shared/domain/IEventStore";
 
 export class WatchlistRepository implements IWatchlistRepository {
   constructor(private readonly eventStore: IEventStore) {}

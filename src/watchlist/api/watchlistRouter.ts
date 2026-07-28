@@ -1,9 +1,9 @@
-import { Router, type Request, type Response } from "express";
+import { type Request, type Response, Router } from "express";
 import { z } from "zod";
 import {
   favoriteAuctionHandler,
-  unfavoriteAuctionHandler,
   getMyFavoritesHandler,
+  unfavoriteAuctionHandler,
 } from "../../index";
 
 export const watchlistRouter = Router();

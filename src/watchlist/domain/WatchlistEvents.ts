@@ -1,4 +1,4 @@
-import { DomainEvent } from "../../shared/domain/DomainEvent";
+import type { DomainEvent } from "../../shared/domain/DomainEvent";
 
 export interface AuctionFavoritedEvent extends DomainEvent {
   readonly eventType: "AuctionFavorited";
