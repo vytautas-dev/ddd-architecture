@@ -45,21 +45,18 @@ model WatchlistAuctionCatalog {
   startsAt   DateTime
   updatedAt  DateTime @updatedAt
 
+  favorites FavoriteView[]
+
   @@map("watchlist_auction_catalog_view")
 }
 
 model FavoriteView {
   bidderId    String
   auctionId   String
-  title       String
-  status      String
-  currentBid  Float?
-  currency    String
-  startsAt    DateTime
   favoritedAt DateTime
 
+  auction WatchlistAuctionCatalog @relation(fields: [auctionId], references: [auctionId])
+
   @@id([bidderId, auctionId])
-  @@index([bidderId, startsAt, auctionId])
-  @@index([auctionId])
   @@map("favorites_view")
 }

@@ -5,6 +5,35 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 
 ---
 
+## 2026-07-28 — Step 5: slim `favorites_view`, join the catalog at read time
+
+**Topic:** `favorites_view` duplicated title/status/currentBid/currency/startsAt from the auction, so every auction change had to be copied into every watcher's row. Removed the duplication now that the Watchlist owns a catalog to join against.
+
+### What changed
+- `favorites_view` → `(bidderId, auctionId, favoritedAt)` + FK to the catalog. Both indexes dropped: the PK covers `bidderId` lookups, and nothing filters by `auctionId` any more.
+- `GetMyFavorites` filters and orders through the relation (`where: { auction: { status } }`, `orderBy: { auction: { startsAt } }`, `include`). **DTO shape unchanged → API contract unchanged.**
+- `FavoritesProjection` lost the catalog lookup **and four event cases** (`AuctionStarted`, `BidPlaced`, `AuctionClosed`, `AuctionCancelled`) — nothing left to refresh or enrich.
+
+### The real payoff: one point of contact between contexts
+`FavoritesProjection` **no longer subscribes to Auction events at all** — it is gone from the `auction` list in `index.ts`. All cross-context event consumption now lives in `AuctionCatalogProjection`. One seam instead of two.
+
+Fan-out is gone with it: `BidPlaced` used to `updateMany` across every watcher's row; it now updates a single catalog row whether the auction has 3 watchers or 30,000. Verified live — started an auction and placed a bid, the favorites list reported `ACTIVE` / `bid: 555` with **zero writes to `favorites_view`**.
+
+### The cost (named, not hidden)
+The covering index `(bidderId, startsAt, auctionId)` is unrecoverable — `startsAt` lives in another table now. Reads became a join with an order-by on the joined column. Invisible at tens of favorites per user, visible at tens of thousands → that's when keyset pagination stops being optional.
+
+### Side effect worth tracking
+The FK now enforces "cannot favorite an auction missing from the catalog" — the invariant we were hand-checking with `findUniqueOrThrow`. **Entry condition for async projections:** once the catalog and favorites catch up independently, that FK will start rejecting writes; it needs either `relationMode = "prisma"` or an ordering guarantee.
+
+Operational note: `prisma migrate dev` refuses destructive changes non-interactively — had to empty `favorites_view` first. The dropped columns are exactly what the join now supplies, so nothing was actually lost.
+
+### Status
+Typecheck clean, 62 tests green. Verified live: ordering by the joined `startsAt`, filtering by the joined `status`, and status/bid propagation without touching `favorites_view`.
+
+New/changed: `+ migration 20260728192133`, `~ schema.prisma`, `~ GetMyFavorites`, `~ FavoritesProjection` (now Watchlist-only), `~ index.ts`, `~ favorites.integration.test.ts` (wiring + two stale comments).
+
+---
+
 ## 2026-07-28 — Watchlist owns its auction read model (and why that was the fix)
 
 **Topic:** the Watchlist read `active_auctions_view` — a read model owned by the *Auction* context — to decide whether an auction can be favorited. A mentor suggested a separate read model. He was right.
@@ -43,7 +72,7 @@ How rebuilds are done in practice — **a dedicated script is the entry-level ru
 > Query side (no domain decision) → read the view directly, no port. Command side (value feeds an aggregate decision) → port + ACL.
 
 ### Deliberately deferred
-- **Step 5** — slim `favorites_view` to `(bidderId, auctionId, favoritedAt)` + join to the catalog. Kills write fan-out (`BidPlaced` does `updateMany` across every watcher's row → one row) and lets `FavoritesProjection` drop Auction events entirely. Trade-off: filtering/ordering move to the joined table, so the `(bidderId, startsAt, auctionId)` covering index no longer applies.
+- ~~**Step 5** — slim `favorites_view` + join to the catalog~~ → **done same day**, see the entry above.
 - Replay script (only three local auctions; returns naturally with checkpoints) · unit test for `AuctionCatalogProjection` · wiring duplicated between `index.ts` and the integration test · tests `TRUNCATE` the **dev** DB, so a separate `DATABASE_URL_TEST` is the next cleanup · no compose file in the repo · `prisma migrate dev` does not regenerate the client.
 
 ### Status

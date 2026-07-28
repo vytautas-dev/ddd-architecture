@@ -1,23 +1,20 @@
-import type { AuctionDomainEvent } from "../../../auction/domain/AuctionEvents";
 import type { DomainEvent } from "../../../shared/domain/DomainEvent";
 import type { IProjection } from "../../../shared/domain/IProjection";
 import type { PrismaUnitOfWork } from "../../../shared/infrastructure/PrismaUnitOfWork";
 import type { WatchlistDomainEvent } from "../../domain/WatchlistEvents";
 
-type HandledEvent = AuctionDomainEvent | WatchlistDomainEvent;
-
+/**
+ * Records which auctions a bidder favorited — nothing more. Auction attributes
+ * live in the catalog and are joined at query time, so this projection needs no
+ * Auction events and never goes stale.
+ */
 export class FavoritesProjection implements IProjection {
   constructor(private readonly uow: PrismaUnitOfWork) {}
 
   async handle(event: DomainEvent): Promise<void> {
-    const e = event as HandledEvent;
+    const e = event as WatchlistDomainEvent;
     switch (e.eventType) {
-      case "AuctionFavorited": {
-        const auction =
-          await this.uow.client.watchlistAuctionCatalog.findUniqueOrThrow({
-            where: { auctionId: e.auctionId },
-          });
-
+      case "AuctionFavorited":
         await this.uow.client.favoriteView.upsert({
           where: {
             bidderId_auctionId: {
@@ -28,17 +25,11 @@ export class FavoritesProjection implements IProjection {
           create: {
             bidderId: e.bidderId,
             auctionId: e.auctionId,
-            title: auction.title,
-            status: auction.status,
-            currentBid: auction.currentBid,
-            currency: auction.currency,
-            startsAt: auction.startsAt,
             favoritedAt: e.occurredAt,
           },
           update: {},
         });
         break;
-      }
       case "AuctionUnfavorited":
         await this.uow.client.favoriteView.delete({
           where: {
@@ -47,30 +38,6 @@ export class FavoritesProjection implements IProjection {
               auctionId: e.auctionId,
             },
           },
-        });
-        break;
-      case "AuctionStarted":
-        await this.uow.client.favoriteView.updateMany({
-          where: { auctionId: e.auctionId },
-          data: { status: "ACTIVE" },
-        });
-        break;
-      case "BidPlaced":
-        await this.uow.client.favoriteView.updateMany({
-          where: { auctionId: e.auctionId },
-          data: { currentBid: e.amount.amount },
-        });
-        break;
-      case "AuctionClosed":
-        await this.uow.client.favoriteView.updateMany({
-          where: { auctionId: e.auctionId },
-          data: { status: "CLOSED" },
-        });
-        break;
-      case "AuctionCancelled":
-        await this.uow.client.favoriteView.updateMany({
-          where: { auctionId: e.auctionId },
-          data: { status: "CANCELLED" },
         });
         break;
     }

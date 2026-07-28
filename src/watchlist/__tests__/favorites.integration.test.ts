@@ -36,7 +36,6 @@ const eventStore = new EventStore(uow, {
   auction: [
     new ActiveAuctionsProjection(uow),
     new AuctionCatalogProjection(uow),
-    favoritesProjection,
   ],
   watchlist: [favoritesProjection],
 });
@@ -110,7 +109,8 @@ describe("Favorites — integration (path through handlers + DB)", () => {
     expect(favorites[0]?.status).toBe("SCHEDULED");
     expect(favorites[0]?.title).toBe("Vintage chair");
 
-    // start aukcji — event z kontekstu Auction odświeża favorites_view
+    // start aukcji — favorites_view nie jest ruszany, nowy status przychodzi
+    // z katalogu przez join przy odczycie
     await startAuction.execute({ auctionId });
 
     expect(
@@ -175,7 +175,8 @@ describe("Favorites — integration (path through handlers + DB)", () => {
     expect(await getMyFavorites.execute({ bidderId: bidderA })).toHaveLength(1);
     expect(await getMyFavorites.execute({ bidderId: bidderB })).toHaveLength(1);
 
-    // start odświeża wiersze obu oferantów (updateMany WHERE auctionId)
+    // start aktualizuje JEDEN wiersz katalogu — obaj oferanci widzą zmianę
+    // przez join, bez zapisu do favorites_view (koniec z fan-outem)
     await startAuction.execute({ auctionId });
     expect(
       (await getMyFavorites.execute({ bidderId: bidderA }))[0]?.status,
