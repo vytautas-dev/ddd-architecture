@@ -8,6 +8,7 @@ import { AuctionRepository } from "../../auction/infrastructure/AuctionRepositor
 import { ActiveAuctionsProjection } from "../../auction/infrastructure/projections/ActiveAuctionsProjection";
 import { PrismaClient } from "../../generated/prisma/client";
 import { withBehaviors } from "../../shared/application/withBehaviors";
+import { CatchUpSubscription } from "../../shared/infrastructure/CatchUpSubscription";
 import { EventStore } from "../../shared/infrastructure/EventStore";
 import { PrismaUnitOfWork } from "../../shared/infrastructure/PrismaUnitOfWork";
 import { FavoriteAuctionHandler } from "../application/commands/FavoriteAuction";
@@ -31,14 +32,18 @@ const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
 const prisma = new PrismaClient({ adapter });
 const uow = new PrismaUnitOfWork(prisma);
 
-const favoritesProjection = new FavoritesProjection(uow);
-const eventStore = new EventStore(uow, {
-  auction: [
-    new ActiveAuctionsProjection(uow),
-    new AuctionCatalogProjection(uow),
-  ],
-  watchlist: [favoritesProjection],
-});
+const eventStore = new EventStore(uow);
+const readModels = new CatchUpSubscription(
+  uow,
+  {
+    auction: [
+      new ActiveAuctionsProjection(uow),
+      new AuctionCatalogProjection(uow),
+    ],
+    watchlist: [new FavoritesProjection(uow)],
+  },
+  "read-models",
+);
 const auctionRepository = new AuctionRepository(eventStore);
 const watchlistRepository = new WatchlistRepository(eventStore);
 const auctionCatalog = new ReadModelAuctionCatalog(uow);
@@ -70,6 +75,14 @@ const unfavoriteAuction = withBehaviors(
 );
 const getMyFavorites = new GetMyFavoritesHandler(prisma);
 
+// Projekcje nie działają już w transakcji komendy — dogania je subskrypcja.
+// Test nie śpi i nie zgaduje: przewija log do końca i dopiero wtedy czyta.
+async function project(): Promise<void> {
+  while ((await readModels.runOnce()) > 0) {
+    // przetwarzaj kolejne batche, aż log się skończy
+  }
+}
+
 async function createScheduledAuction(
   title = "Vintage chair",
 ): Promise<string> {
@@ -82,12 +95,16 @@ async function createScheduledAuction(
     endsAt: new Date(Date.now() + 7 * DAY),
     startsAt: new Date(Date.now() + DAY), // przyszłość → SCHEDULED
   });
+  // fixture obiecuje aukcję widoczną w katalogu, nie samo zdarzenie w logu
+  await project();
   return auctionId;
 }
 
 beforeEach(async () => {
+  // checkpoint to stan tego testu tak samo jak widoki — bez tego subskrypcja
+  // pamiętałaby pozycję z poprzedniego scenariusza
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "event_store", "active_auctions_view", "favorites_view", "watchlist_auction_catalog_view"',
+    'TRUNCATE TABLE "event_store", "active_auctions_view", "favorites_view", "watchlist_auction_catalog_view", "projection_checkpoints"',
   );
 });
 
@@ -102,6 +119,7 @@ describe("Favorites — integration (path through handlers + DB)", () => {
 
     // polubienie nadchodzącej aukcji
     await favoriteAuction.execute({ bidderId, auctionId });
+    await project();
 
     const favorites = await getMyFavorites.execute({ bidderId });
     expect(favorites).toHaveLength(1);
@@ -112,6 +130,7 @@ describe("Favorites — integration (path through handlers + DB)", () => {
     // start aukcji — favorites_view nie jest ruszany, nowy status przychodzi
     // z katalogu przez join przy odczycie
     await startAuction.execute({ auctionId });
+    await project();
 
     expect(
       await getMyFavorites.execute({ bidderId, status: "SCHEDULED" }),
@@ -122,6 +141,7 @@ describe("Favorites — integration (path through handlers + DB)", () => {
 
     // odlubienie
     await unfavoriteAuction.execute({ bidderId, auctionId });
+    await project();
     expect(await getMyFavorites.execute({ bidderId })).toHaveLength(0);
   });
 
@@ -129,6 +149,9 @@ describe("Favorites — integration (path through handlers + DB)", () => {
     const bidderId = uuid();
     const auctionId = await createScheduledAuction();
     await startAuction.execute({ auctionId }); // → ACTIVE
+    // bez tego katalog wciąż mówi SCHEDULED i polubienie by przeszło —
+    // reguła domenowa czyta model eventually consistent
+    await project();
 
     await expect(
       favoriteAuction.execute({ bidderId, auctionId }),
@@ -142,6 +165,7 @@ describe("Favorites — integration (path through handlers + DB)", () => {
     const bidderId = uuid();
     const auctionId = await createScheduledAuction();
     await cancelAuction.execute({ auctionId });
+    await project();
 
     await expect(
       favoriteAuction.execute({ bidderId, auctionId }),
@@ -159,6 +183,8 @@ describe("Favorites — integration (path through handlers + DB)", () => {
     const auctionId = await createScheduledAuction();
     await favoriteAuction.execute({ bidderId, auctionId });
 
+    // celowo BEZ project(): regułę "już polubione" trzyma agregat Watchlist,
+    // odtwarzany z event store'u — jest natychmiast spójna, nie eventually
     await expect(
       favoriteAuction.execute({ bidderId, auctionId }),
     ).rejects.toThrow(AuctionAlreadyFavoritedError);
@@ -171,6 +197,7 @@ describe("Favorites — integration (path through handlers + DB)", () => {
 
     await favoriteAuction.execute({ bidderId: bidderA, auctionId });
     await favoriteAuction.execute({ bidderId: bidderB, auctionId });
+    await project();
 
     expect(await getMyFavorites.execute({ bidderId: bidderA })).toHaveLength(1);
     expect(await getMyFavorites.execute({ bidderId: bidderB })).toHaveLength(1);
@@ -178,6 +205,7 @@ describe("Favorites — integration (path through handlers + DB)", () => {
     // start aktualizuje JEDEN wiersz katalogu — obaj oferanci widzą zmianę
     // przez join, bez zapisu do favorites_view (koniec z fan-outem)
     await startAuction.execute({ auctionId });
+    await project();
     expect(
       (await getMyFavorites.execute({ bidderId: bidderA }))[0]?.status,
     ).toBe("ACTIVE");

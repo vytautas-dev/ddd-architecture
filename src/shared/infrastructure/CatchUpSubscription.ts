@@ -10,6 +10,37 @@ export class CatchUpSubscription {
     private readonly batchSize: number = 100,
   ) {}
 
+  private timer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Runs `runOnce` repeatedly. Never overlaps: the next run is scheduled
+   *  only after the previous one settles. */
+  start(intervalMs: number = 200): void {
+    if (this.timer !== null) return;
+
+    const tick = async (): Promise<void> => {
+      let handled = 0;
+      try {
+        handled = await this.runOnce();
+      } catch (error) {
+        console.error(`[${this.subscriberName}] subscription failed`, error);
+      }
+      if (this.timer === null) return;
+      this.timer = setTimeout(
+        tick,
+        handled === this.batchSize ? 0 : intervalMs,
+      );
+    };
+
+    this.timer = setTimeout(tick, 0);
+  }
+
+  stop(): void {
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+    }
+    this.timer = null;
+  }
+
   async runOnce(): Promise<number> {
     const records = await this.readBatch();
 

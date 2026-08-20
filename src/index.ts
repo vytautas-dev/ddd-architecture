@@ -12,6 +12,7 @@ import { AuctionRepository } from "./auction/infrastructure/AuctionRepository";
 import { ActiveAuctionsProjection } from "./auction/infrastructure/projections/ActiveAuctionsProjection";
 import { PrismaClient } from "./generated/prisma/client";
 import { withBehaviors } from "./shared/application/withBehaviors";
+import { CatchUpSubscription } from "./shared/infrastructure/CatchUpSubscription";
 import { EventStore } from "./shared/infrastructure/EventStore";
 import { PrismaUnitOfWork } from "./shared/infrastructure/PrismaUnitOfWork";
 import { watchlistRouter } from "./watchlist/api/watchlistRouter";
@@ -30,13 +31,18 @@ const uow = new PrismaUnitOfWork(prisma);
 const activeAuctionsProjection = new ActiveAuctionsProjection(uow);
 const favoritesProjection = new FavoritesProjection(uow);
 const auctionCatalogProjection = new AuctionCatalogProjection(uow);
-const eventStore = new EventStore(uow, {
-  auction: [activeAuctionsProjection, auctionCatalogProjection],
-  watchlist: [favoritesProjection],
-});
+const eventStore = new EventStore(uow);
 const auctionRepository = new AuctionRepository(eventStore);
 const watchlistRepository = new WatchlistRepository(eventStore);
 const auctionCatalog = new ReadModelAuctionCatalog(uow);
+const readModels = new CatchUpSubscription(
+  uow,
+  {
+    auction: [activeAuctionsProjection, auctionCatalogProjection],
+    watchlist: [favoritesProjection],
+  },
+  "read-models",
+);
 
 export const createAuctionHandler = withBehaviors(
   new CreateAuctionHandler(auctionRepository),
@@ -77,3 +83,4 @@ const PORT = process.env["PORT"] ?? 3000;
 app.listen(PORT, () => {
   console.log(`BidFlow running on http://localhost:${PORT}`);
 });
+readModels.start();
