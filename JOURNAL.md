@@ -5,6 +5,39 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 
 ---
 
+## 2026-08-20 — Step 1: clear the schema drift, isolate the test database
+
+**Topic:** groundwork before async projections. Two chores that block the next stage: the database had drifted away from the repo, and integration tests were TRUNCATE-ing the **dev** database.
+
+### 1A — Drift removed
+
+An abandoned async-projections experiment had left the database **ahead of the repo**: `event_store.position`, a `projection_checkpoints` table (with `status` / `failedPosition` / `lastError`) and two rows in `_prisma_migrations` — while `schema.prisma`, the migration `.sql` files and all TypeScript had been reverted. Two empty migration directories were the only trace left in the tree (a `git clean -f` without `-d` removes untracked files but keeps the directories).
+
+- Removed the two empty migration directories — Prisma reads *every* directory under `prisma/migrations/` and needs a `migration.sql` in each, so they would have failed the reset before it started.
+- Deleted `src/generated/prisma` — the generated client still exported `ProjectionCheckpoint`, i.e. the type system was advertising a table that exists in neither the schema nor the database. Generated code is disposable; it is gitignored precisely because it is a *function of the schema*.
+- `prisma migrate reset` — drop, then replay all 6 migrations from the repo. **The same mechanism as `Auction.reconstitute(events)`**: state comes from replaying a history, never from patching by hand. Prisma refuses this command when it detects an AI agent invoking it, and demands explicit human consent — a good guard.
+
+Rule restated: **the repo is the source of truth, the database is its reflection.** `migrate reset` is dev-only; production gets `migrate deploy`, which only applies what is missing and never drops.
+
+### 1B — Separate test database
+
+`favorites.integration.test.ts` and `atomicity.integration.test.ts` open with `TRUNCATE`, and they were pointing at `DATABASE_URL` — the dev database. One `npm test` wiped local data.
+
+- `DATABASE_URL_TEST` → `bidflow_test` (same container, separate database).
+- `jest.setup.ts`, registered as `setupFiles`, overwrites `process.env.DATABASE_URL` with it. **It has to be `setupFiles`, not a `beforeAll` hook:** the tests build `new PrismaPg(...)` at *module import* time, and `setupFiles` is the only jest phase that runs before the test module is loaded. (`dotenv` never overrides an already-set variable, so the swap survives the `import "dotenv/config"` inside each test file.)
+- `scripts/testDatabaseUrl.ts` — one guard, three refusals: no `DATABASE_URL_TEST`, a value equal to `DATABASE_URL`, or a database name not ending in `_test`. A destructive test suite should be **structurally unable** to point at the wrong database, not merely configured not to.
+- `npm run db:test:migrate` (`scripts/migrate-test-db.ts`) applies migrations to the test database with `migrate deploy` — apply-only. The script re-uses the same guard, so there is a single definition of "which database is the test one".
+
+### Verification
+- Database: 5 tables, no `projection_checkpoints`, `event_store` without `position`, 6 migrations.
+- `tsc --noEmit` clean; **62 tests green** in 8 suites.
+- After a full run: `bidflow_test` holds the test rows (`event_store=4`), `bidflow` is untouched at `0` — proof the redirection works.
+- Guard smoke-tested by pointing `DATABASE_URL_TEST` at the dev database: it throws before a single query runs.
+
+### Notes
+- `docker-compose.yml` **is** in the repo (the note in `CLAUDE.md` claiming otherwise was stale) — removed.
+- Pre-existing, untouched: `npm run lint` already fails on `./src` (Biome import-organization findings from before this change).
+
 ## 2026-07-28 — Step 5: slim `favorites_view`, join the catalog at read time
 
 **Topic:** `favorites_view` duplicated title/status/currentBid/currency/startsAt from the auction, so every auction change had to be copied into every watcher's row. Removed the duplication now that the Watchlist owns a catalog to join against.
