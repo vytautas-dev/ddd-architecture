@@ -5,6 +5,68 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 
 ---
 
+## 2026-08-20 — Step 3A: projections leave the command transaction
+
+**Topic:** read models stop being written by the command and start being *pulled* from the event log by a subscriber that remembers where it stopped. Three sub-steps: the log gets a global order and the subscriber gets a bookmark (3A.1), the subscriber is written (3A.2), the switch is flipped (3A.3).
+
+### Why `position` and not `version`
+
+`version` is per stream — it orders bids inside one auction and says nothing about whether that bid happened before or after some favoriting in another stream. A subscriber feeding several projections needs a **total order across the whole log**, which is what the new `event_store.position` (`BIGSERIAL`, `@unique`) provides. `version` keeps its own job: optimistic concurrency inside a stream. Two orderings, two purposes, no overlap.
+
+### Decision: one subscriber, not one per projection
+
+A single `"read-models"` checkpoint drives all three projections in `position` order.
+
+Independent checkpoints were the obvious alternative and would give each projection its own failure isolation. Rejected because `favorites_view.auctionId` has a **foreign key** to `watchlist_auction_catalog_view`: let `FavoritesProjection` overtake `AuctionCatalogProjection` and it inserts a favorite for an auction the catalog has not seen yet → FK violation. One ordered subscriber keeps that FK valid **without a schema change**, which closes the "decide what to do about the `favorites_view` FK" item parked since the read/write split.
+
+**The cost, named:** shared fate. One failing projection stalls all of them. The trigger to revisit is **reactors** (sending mail, calling other systems) — those need their own checkpoint so a rebuild does not re-send yesterday's emails.
+
+### Decision: one transaction per event, not per batch
+
+The rule applied: **the transaction boundary should equal the retry boundary.** With a batch-wide transaction a single poison event at position 7 rolls back events 1–6 as well, the checkpoint never moves, and the batch retries forever; step 3B would then have to split the batch anyway to say "*this* event is dead". Per-event costs N round trips instead of one — irrelevant here, and batching is the optimisation to reach for when throughput hurts, made safe by step 2's idempotency.
+
+What actually matters is that **the projection writes and the checkpoint advance sit in the same transaction**. Split them and a crash in between either replays the event (harmless — step 2) or loses it forever (silent corruption). One transaction removes the question instead of answering it.
+
+### Decision: `position` stays out of `IProjection`
+
+Step 2 predicted event metadata would arrive here. It did — but at the **subscription** level, not in `handle`. The checkpoint is the subscriber's bookkeeping ("how far have I read"); a projection answers a different question ("apply this fact to my table"), and none of the three needs `position`. Changing the port before anything consumes the metadata would be textbook premature abstraction. It becomes justified the moment a projection genuinely needs it — a per-row `lastVersion`, or writing `position` into a view for read-your-writes.
+
+### Decision: self-scheduling `setTimeout`, not `setInterval` + a flag
+
+`setInterval` fires on the clock regardless of whether the previous async run finished, so runs overlap: two loops, one checkpoint, the same batch twice. The usual patch is an `isRunning` boolean. Scheduling the next run only *after* the current one settles makes overlap **structurally impossible** — the invariant beats the guard, and the composition root stays stateless.
+
+### Decision: same process, not a worker
+
+`readModels.start()` runs next to `app.listen` — one process, one event loop, one connection pool. `CatchUpSubscription` itself is process-agnostic (`runOnce()` knows nothing about who calls it), so promoting it to a worker later is a **new entry file, not a rewrite**.
+
+**The cost, named:** two API instances would mean two subscribers on one checkpoint with no locking — duplicated work and a race on `position`. Idempotency keeps the views correct, so this is waste rather than corruption, but **the app is only correct as a single instance** until 3B adds a lock.
+
+### What changed
+
+- `EventStore` lost its projection map and its dispatch loop. Appending events and notifying readers were two jobs in one class — and `IEventStore` never claimed the second one, so the port was right all along and the implementation had drifted past it.
+- `CatchUpSubscription` (`shared/infrastructure/`): reads the checkpoint, takes events with `position` greater than it in ascending order, and for each one opens a transaction covering dispatch + checkpoint. `upsert` on the checkpoint because the first run has no row; `gt` not `gte` because the checkpoint means "last position finished".
+- Events with a `streamType` nobody subscribes to still advance the checkpoint. "I read it", not "I stored something" — otherwise the subscriber stalls on the first event that does not concern it.
+- Integration tests changed shape. `favorites` drains the subscription through an explicit `project()` helper instead of sleeping — the payoff of keeping `runOnce()` public. The "already favorited" case deliberately skips it: that rule lives in the aggregate, reconstituted from the event store, so it is immediately consistent. The contrast between *aggregate = now* and *view = shortly* is the clearest CQRS lesson in the suite.
+
+### The guarantee that inverted
+
+`atomicity.integration.test.ts` asserted "a failing projection rolls back the event". That is **no longer true and must not be**: a read model is a disposable cache and has no business vetoing a command. Rewritten around what is atomic now — projection writes plus the checkpoint — with the inversion stated in a comment rather than the old test quietly deleted. Its four cases: the command commits before anything projects; a failing projection does not roll the command back; a partial batch rolls back writes *and* checkpoint together; redelivery converges once the projection heals.
+
+### Costs carried into 3B / 3C
+
+- **The `BIGSERIAL` gap trap** is now live and is the most dangerous thing in this code: `position` is assigned when the row is created, not when the transaction commits, so a slow transaction can commit *behind* an already-read position and be **skipped forever**. Planned fix: read only past `pg_snapshot_xmin(pg_current_snapshot())`. Researched, not yet prototyped here.
+- **A poison event spins the loop forever**, logging on every pass. The `try/catch` in `start()` is not optional — an unhandled rejection in a timer callback kills the Node process — but it converts a crash into an infinite retry. Retry limits + dead-letter are 3B.
+- **`FavoriteAuctionHandler` now reads an eventually consistent catalog to make a domain decision.** A freshly created auction can produce a false 404. Visible in miniature in the favorites test, which must project before it can favorite. 3C.
+- `payload` comes back from the database as JSON, so `Date` fields arrive as ISO **strings** while the TypeScript type still says `Date`. Harmless today (verified: Prisma accepts `Date | string` on `DateTime` inputs, and no projection calls a date method), but it is a live landmine for the first person who writes `e.startsAt.getTime()`.
+
+### Verification
+
+- `tsc --noEmit` clean, **63 tests green** in 8 suites.
+- Before wiring, a throwaway script proved the subscription end-to-end against `bidflow_test` with an `EventStore` built with **no** projections, so only the subscriber could fill the views: 3 events → views built, checkpoint at 3; a second `runOnce()` → 0 events; checkpoint rewound to 0 and replayed → byte-identical views.
+- The favorites suite was checked for teeth by mutation: stubbing `project()` out to a no-op fails **5 of 6** tests. The one that survives needs no projection at all.
+
+---
+
 ## 2026-08-20 — Step 2: idempotent projections
 
 **Topic:** groundwork for async projections. While projections run inside the command transaction every event reaches them exactly once; behind a catch-up subscription the same event can arrive twice (rebuild, rewound checkpoint, retry). All three projections assumed exactly-once.
