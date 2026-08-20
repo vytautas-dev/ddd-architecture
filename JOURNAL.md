@@ -9,6 +9,66 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 
 **Topic:** read models stop being written by the command and start being *pulled* from the event log by a subscriber that remembers where it stopped. Three sub-steps: the log gets a global order and the subscriber gets a bookmark (3A.1), the subscriber is written (3A.2), the switch is flipped (3A.3).
 
+### How it works now
+
+The command and the read models no longer share a transaction. They share a **log**.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    participant H as Command Handler
+    participant ES as EventStore
+    participant LOG as event_store
+    participant S as CatchUpSubscription
+    participant CP as projection_checkpoints
+    participant P as Projections
+    participant V as Read model views
+
+    Note over C,LOG: Transaction 1 — the command. Ends as soon as the event is durable.
+    C->>H: POST /auctions/:id/bids
+    H->>ES: append("auction", id, [BidPlaced], expectedVersion)
+    ES->>LOG: INSERT — version from the aggregate, position from the sequence
+    LOG-->>ES: committed
+    H-->>C: 200 — the write is done
+
+    Note over C,V: The views are still stale right here.<br/>This gap is what "eventually consistent" means.
+
+    Note over S,V: Transactions 2..N — the subscription. One per event.
+    loop start reschedules only after the previous run settles
+        S->>CP: read position for subscriber "read-models"
+        S->>LOG: read events with a greater position, ordered, limit batchSize
+        LOG-->>S: events in total order across every stream
+        loop for each event
+            S->>P: handle(payload)
+            P->>V: upsert / updateMany — idempotent
+            S->>CP: upsert position
+            Note over P,CP: these two writes commit together
+        end
+    end
+```
+
+The reason both writes must land in one transaction is easiest to see by asking what a crash between them would do:
+
+```mermaid
+flowchart TD
+    A["runOnce(): read the checkpoint"] --> B["read events past it, in position order"]
+    B --> C{"anything to do?"}
+    C -- "no" --> D["return 0, sleep intervalMs"]
+    C -- "yes" --> E["BEGIN — one event"]
+    E --> F["dispatch to the projections<br/>registered for this streamType"]
+    F --> G{"did a projection throw?"}
+    G -- "no" --> H["set checkpoint to this event's position"]
+    H --> I["COMMIT — view and checkpoint move as one"]
+    I --> C
+    G -- "yes" --> J["ROLLBACK — view writes undone,<br/>checkpoint never moved"]
+    J --> K["the same event is read again next run"]
+    K --> L["converges once the projection recovers,<br/>because applying it twice is safe"]
+    L --> M["but nothing gives up yet:<br/>a poison event spins forever — 3B"]
+```
+
+Note what is *not* in either diagram: any arrow from `EventStore` to a projection. That edge existed until 3A.3 and its removal is the whole step.
+
 ### Why `position` and not `version`
 
 `version` is per stream — it orders bids inside one auction and says nothing about whether that bid happened before or after some favoriting in another stream. A subscriber feeding several projections needs a **total order across the whole log**, which is what the new `event_store.position` (`BIGSERIAL`, `@unique`) provides. `version` keeps its own job: optimistic concurrency inside a stream. Two orderings, two purposes, no overlap.
