@@ -9,38 +9,41 @@ export class AuctionCatalogProjection implements IProjection {
   async handle(event: DomainEvent): Promise<void> {
     const e = event as AuctionDomainEvent;
     switch (e.eventType) {
-      case "AuctionCreated":
-        await this.uow.client.watchlistAuctionCatalog.create({
-          data: {
-            auctionId: e.auctionId,
-            title: e.title,
-            status: e.status,
-            currentBid: null,
-            currency: e.startingPrice.currency,
-            startsAt: e.startsAt,
-          },
+      case "AuctionCreated": {
+        const row = {
+          title: e.title,
+          status: e.status,
+          currentBid: null,
+          currency: e.startingPrice.currency,
+          startsAt: e.startsAt,
+        };
+        await this.uow.client.watchlistAuctionCatalog.upsert({
+          where: { auctionId: e.auctionId },
+          create: { auctionId: e.auctionId, ...row },
+          update: row,
         });
         break;
+      }
       case "AuctionStarted":
-        await this.uow.client.watchlistAuctionCatalog.update({
+        await this.uow.client.watchlistAuctionCatalog.updateMany({
           where: { auctionId: e.auctionId },
           data: { status: "ACTIVE" },
         });
         break;
       case "BidPlaced":
-        await this.uow.client.watchlistAuctionCatalog.update({
+        await this.uow.client.watchlistAuctionCatalog.updateMany({
           where: { auctionId: e.auctionId },
           data: { currentBid: e.amount.amount },
         });
         break;
       case "AuctionClosed":
-        await this.uow.client.watchlistAuctionCatalog.update({
+        await this.uow.client.watchlistAuctionCatalog.updateMany({
           where: { auctionId: e.auctionId },
           data: { status: "CLOSED" },
         });
         break;
       case "AuctionCancelled":
-        await this.uow.client.watchlistAuctionCatalog.update({
+        await this.uow.client.watchlistAuctionCatalog.updateMany({
           where: { auctionId: e.auctionId },
           data: { status: "CANCELLED" },
         });

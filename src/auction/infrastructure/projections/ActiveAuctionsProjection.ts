@@ -9,39 +9,40 @@ export class ActiveAuctionsProjection implements IProjection {
   async handle(event: DomainEvent): Promise<void> {
     const e = event as AuctionDomainEvent;
     switch (e.eventType) {
-      case "AuctionCreated":
-        await this.uow.client.activeAuctionView.create({
-          data: {
-            id: e.auctionId,
-            sellerId: e.sellerId,
-            title: e.title,
-            status: e.status,
-            currentBid: null,
-            currency: e.startingPrice.currency,
-            startsAt: e.startsAt,
-            endsAt: e.endsAt,
-            totalBids: 0,
-          },
+      case "AuctionCreated": {
+        const row = {
+          sellerId: e.sellerId,
+          title: e.title,
+          status: e.status,
+          currentBid: null,
+          currency: e.startingPrice.currency,
+          startsAt: e.startsAt,
+          endsAt: e.endsAt,
+          totalBids: 0,
+        };
+
+        await this.uow.client.activeAuctionView.upsert({
+          where: { id: e.auctionId },
+          create: { id: e.auctionId, ...row },
+          update: row,
         });
         break;
+      }
       case "BidPlaced":
-        await this.uow.client.activeAuctionView.update({
+        await this.uow.client.activeAuctionView.updateMany({
           where: { id: e.auctionId },
-          data: {
-            currentBid: e.amount.amount,
-            totalBids: { increment: 1 },
-          },
+          data: { currentBid: e.amount.amount, totalBids: e.bidNumber },
         });
         break;
       case "AuctionStarted":
-        await this.uow.client.activeAuctionView.update({
+        await this.uow.client.activeAuctionView.updateMany({
           where: { id: e.auctionId },
           data: { status: "ACTIVE" },
         });
         break;
       case "AuctionClosed":
       case "AuctionCancelled":
-        await this.uow.client.activeAuctionView.delete({
+        await this.uow.client.activeAuctionView.deleteMany({
           where: { id: e.auctionId },
         });
         break;

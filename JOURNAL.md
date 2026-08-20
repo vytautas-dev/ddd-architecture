@@ -5,6 +5,41 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 
 ---
 
+## 2026-08-20 — Step 2: idempotent projections
+
+**Topic:** groundwork for async projections. While projections run inside the command transaction every event reaches them exactly once; behind a catch-up subscription the same event can arrive twice (rebuild, rewound checkpoint, retry). All three projections assumed exactly-once.
+
+### Two ways idempotency was broken — and only one of them is loud
+- **Assuming a row exists** (`create` / `update` / `delete`) → `P2002` / `P2025` on redelivery. Loud, harmless: you see it immediately.
+- **Relative writes** (`totalBids: { increment: 1 }`) → silently doubles. **The dangerous one.**
+
+### The decision: where does `totalBids` come from
+`BidPlacedEvent` did not know which bid in order it was, so the counter could not be turned into an absolute value without a choice. Three candidates:
+
+- **A. Enrich the event** with `bidNumber` — projection writes `totalBids: e.bidNumber`.
+- **B. Dedup marker per row** (`lastVersion` in every view table, skip events at or below it) — the general mechanism, covers every case at once.
+- **C. Do nothing**, and rely on the checkpoint committing in the same transaction as the view write (effectively-once).
+
+**Chose A.** C is a guarantee that only holds until someone rebuilds without truncating, rewinds a checkpoint, or projects into something outside Postgres. B is the better general answer but needs projections to receive event *metadata* (the version), i.e. a changed `IProjection.handle` signature — and that metadata arrives naturally in step 3 together with `position`. Building it now would be **premature abstraction**. A is the smallest thing that solves the actual problem, and `bidNumber` is a genuine domain fact ("that was the 7th bid"), not a field bolted on for the read model.
+
+Free pass taken knowingly: the event store was empty after the step-1 reset, so no historical `BidPlaced` lacks the field. In a live system changing an event contract needs a tolerant reader or upcasting — **events are immutable, they never get backfilled**.
+
+### What changed
+- `BidPlacedEvent` gained `bidNumber`. `Auction` gained `bidCount`, incremented **only in `apply`** — `placeBid` builds the event with `this.bidCount + 1` *before* `applyAndRecord` applies it, so the write path and `reconstitute` produce identical state. Mutating state anywhere but `apply` is what breaks that equality.
+- `cancel()` now reads `if (this.bidCount > 0)` instead of `currentHighestBid !== null`. Equivalent, but it states the rule in the same words as the error name.
+- All three projections translated: `create` → `upsert`, `update` → `updateMany`, `delete` → `deleteMany`, `{ increment: 1 }` → `e.bidNumber`. `FavoritesProjection.AuctionFavorited` was already an `upsert` — idempotent since the day it was written.
+- `updateMany`/`deleteMany` are not about touching many rows (the `where` still targets one PK) — they are Prisma's idiom for "…if it exists": `update` throws `P2025` on zero matches, `updateMany` returns `{ count: 0 }`.
+
+### The cost, named
+**A loud failure became a silent no-op.** A missing row used to abort the command; now it passes unnoticed and the read model quietly drifts — the worst failure mode. Not fixed here because the fix needs somewhere to report "this event did not stick": retry + dead-letter, i.e. step 3. **Open decision for step 3:** what `count === 0` on `BidPlaced` should mean — a log line or a dead-lettered event.
+
+### Verification
+- `tsc --noEmit` clean, 62 tests green.
+- Idempotency proven empirically with a throwaway script against `bidflow_test`: `AuctionCreated` + two `BidPlaced` → `totalBids=2`; **replaying the same three events → still `totalBids=2`**; `AuctionClosed` twice → no exception. The old code would have produced `4` and a `P2025`.
+- The `update` branch of the `AuctionCreated` upsert deliberately resets `totalBids: 0` / `currentBid: null`. Idempotency here means **convergence when a prefix of history is replayed**, not "never touch existing rows" — a rewind past `AuctionCreated` replays the bids right after it.
+
+---
+
 ## 2026-08-20 — Step 1: clear the schema drift, isolate the test database
 
 **Topic:** groundwork before async projections. Two chores that block the next stage: the database had drifted away from the repo, and integration tests were TRUNCATE-ing the **dev** database.

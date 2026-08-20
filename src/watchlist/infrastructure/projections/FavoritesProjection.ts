@@ -31,12 +31,10 @@ export class FavoritesProjection implements IProjection {
         });
         break;
       case "AuctionUnfavorited":
-        await this.uow.client.favoriteView.delete({
+        await this.uow.client.favoriteView.deleteMany({
           where: {
-            bidderId_auctionId: {
-              bidderId: e.bidderId,
-              auctionId: e.auctionId,
-            },
+            bidderId: e.bidderId,
+            auctionId: e.auctionId,
           },
         });
         break;

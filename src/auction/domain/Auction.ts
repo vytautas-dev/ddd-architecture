@@ -26,6 +26,7 @@ export class Auction {
   public currentHighestBid: Money | null = null;
   public currentHighestBidderId: string | null = null;
   public status: AuctionStatus = AuctionStatus.ACTIVE;
+  public bidCount: number = 0;
 
   private uncommittedEvents: AuctionDomainEvent[] = [];
   private persistedVersion: number = 0;
@@ -105,6 +106,7 @@ export class Auction {
       bidderId,
       amount: { amount: amount.amount, currency: amount.currency },
       occurredAt: new Date(),
+      bidNumber: this.bidCount + 1,
     });
   }
 
@@ -118,9 +120,10 @@ export class Auction {
   }
 
   cancel(): void {
-    if (this.currentHighestBid !== null) {
+    if (this.bidCount > 0) {
       throw new CannotCancelAuctionWithBidsError();
     }
+
     this.applyAndRecord({
       eventType: "AuctionCancelled",
       auctionId: this.id,
@@ -154,6 +157,7 @@ export class Auction {
           event.amount.currency,
         );
         this.currentHighestBidderId = event.bidderId;
+        this.bidCount += 1;
         break;
       case "AuctionClosed":
         this.status = AuctionStatus.CLOSED;
