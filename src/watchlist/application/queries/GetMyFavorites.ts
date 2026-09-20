@@ -21,18 +21,19 @@ export class GetMyFavoritesHandler {
     const rows = await this.prisma.favoriteView.findMany({
       where: {
         bidderId: query.bidderId,
-        ...(query.status ? { status: query.status } : {}),
+        ...(query.status ? { auction: { status: query.status } } : {}),
       },
-      orderBy: [{ startsAt: "asc" }, { auctionId: "asc" }],
+      orderBy: [{ auction: { startsAt: "asc" } }, { auctionId: "asc" }],
+      include: { auction: true },
     });
 
     return rows.map((r) => ({
       auctionId: r.auctionId,
-      title: r.title,
-      startsAt: r.startsAt,
-      status: r.status,
-      currentBid: r.currentBid,
-      currency: r.currency,
+      title: r.auction.title,
+      startsAt: r.auction.startsAt,
+      status: r.auction.status,
+      currentBid: r.auction.currentBid,
+      currency: r.auction.currency,
     }));
   }
 }

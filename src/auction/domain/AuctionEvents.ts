@@ -22,6 +22,7 @@ export interface BidPlacedEvent extends DomainEvent {
   readonly auctionId: string;
   readonly bidderId: string;
   readonly amount: MoneyAttributes;
+  readonly bidNumber: number;
 }
 
 export interface AuctionClosedEvent extends DomainEvent {

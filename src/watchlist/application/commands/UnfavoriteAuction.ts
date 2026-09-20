@@ -1,5 +1,5 @@
-import type { IWatchlistRepository } from "../../domain/IWatchlistRepository";
 import type { CommandHandler } from "../../../shared/application/CommandHandler";
+import type { IWatchlistRepository } from "../../domain/IWatchlistRepository";
 
 export interface UnfavoriteAuctionCommand {
   bidderId: string;

@@ -1,6 +1,9 @@
+import type { AuctionForFavoriting } from "./IAuctionCatalog";
 import {
   AuctionAlreadyFavoritedError,
   AuctionNotFavoritedError,
+  AuctionNotUpcomingError,
+  AuctionToFavoriteNotFoundError,
 } from "./WatchlistErrors";
 import type { WatchlistDomainEvent } from "./WatchlistEvents";
 
@@ -30,7 +33,13 @@ export class Watchlist {
     return this.persistedVersion;
   }
 
-  favorite(auctionId: string): void {
+  favorite(auctionId: string, auction: AuctionForFavoriting): void {
+    if (!auction.exists) {
+      throw new AuctionToFavoriteNotFoundError();
+    }
+    if (!auction.isUpcoming) {
+      throw new AuctionNotUpcomingError();
+    }
     if (this.favoritedAuctionIds.has(auctionId)) {
       throw new AuctionAlreadyFavoritedError();
     }

@@ -15,6 +15,7 @@ model EventStore {
   payload    Json
   version    Int
   occurredAt DateTime @default(now())
+  position   BigInt   @unique @default(autoincrement())
 
   @@unique([streamId, version])
   @@index([streamId])
@@ -22,32 +23,49 @@ model EventStore {
 }
 
 model ActiveAuctionView {
-  id             String   @id
-  sellerId       String
-  title          String
-  status         String
-  currentBid     Float?
-  currency       String
-  startsAt       DateTime
-  endsAt         DateTime
-  totalBids      Int      @default(0)
-  updatedAt      DateTime @updatedAt
+  id         String   @id
+  sellerId   String
+  title      String
+  status     String
+  currentBid Float?
+  currency   String
+  startsAt   DateTime
+  endsAt     DateTime
+  totalBids  Int      @default(0)
+  updatedAt  DateTime @updatedAt
 
   @@map("active_auctions_view")
+}
+
+model WatchlistAuctionCatalog {
+  auctionId  String   @id
+  title      String
+  status     String
+  currentBid Float?
+  currency   String
+  startsAt   DateTime
+  updatedAt  DateTime @updatedAt
+
+  favorites FavoriteView[]
+
+  @@map("watchlist_auction_catalog_view")
 }
 
 model FavoriteView {
   bidderId    String
   auctionId   String
-  title       String
-  status      String
-  currentBid  Float?
-  currency    String
-  startsAt    DateTime
   favoritedAt DateTime
 
+  auction WatchlistAuctionCatalog @relation(fields: [auctionId], references: [auctionId])
+
   @@id([bidderId, auctionId])
-  @@index([bidderId, startsAt, auctionId])
-  @@index([auctionId])
   @@map("favorites_view")
+}
+
+model ProjectionCheckpoint {
+  subscriberName String   @id
+  position       BigInt   @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@map("projection_checkpoints")
 }

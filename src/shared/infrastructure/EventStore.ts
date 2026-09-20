@@ -1,14 +1,10 @@
 import type { DomainEvent } from "../domain/DomainEvent";
 import type { IEventStore, StoredEvent } from "../domain/IEventStore";
-import type { IProjection } from "../domain/IProjection";
 import { OptimisticConcurrencyError } from "../domain/OptimisticConcurrencyError";
 import type { PrismaUnitOfWork } from "./PrismaUnitOfWork";
 
 export class EventStore implements IEventStore {
-  constructor(
-    private readonly uow: PrismaUnitOfWork,
-    private readonly projections: Record<string, IProjection[]> = {},
-  ) {}
+  constructor(private readonly uow: PrismaUnitOfWork) {}
 
   async append(
     streamType: string,
@@ -32,13 +28,6 @@ export class EventStore implements IEventStore {
         throw new OptimisticConcurrencyError(streamId);
       }
       throw error;
-    }
-
-    const projections = this.projections[streamType] ?? [];
-    for (const event of events) {
-      for (const projection of projections) {
-        await projection.handle(event);
-      }
     }
   }
 
