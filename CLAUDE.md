@@ -133,3 +133,15 @@ Update this section when a stage is completed.
 - **Infrastructure leaking into domain** — importing Prisma in domain/
 - **Premature abstraction** — creating base classes "for the future"
 - **God Service** — one service class that handles everything for a given context
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Specs and tickets live as markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root, both created lazily by `/domain-modeling`. See `docs/agents/domain.md`.
