@@ -1,0 +1,52 @@
+diff --git a/node_modules/@chassisjs/hermes-postgresql/lib/index.cjs b/node_modules/@chassisjs/hermes-postgresql/lib/index.cjs
+index c22ea36..beb1165 100644
+--- a/node_modules/@chassisjs/hermes-postgresql/lib/index.cjs
++++ b/node_modules/@chassisjs/hermes-postgresql/lib/index.cjs
+@@ -707,11 +707,18 @@ const startLogicalReplication = async (params) => {
+             acknowledgeLastLsn();
+         }
+         else if (result.topLevelType === TopLevelType.XLogData && result.messageType === MessageType.Commit) {
++            // PATCHED (bidflow): acknowledge exactly the transaction that was
++            // committed. It runs only after the publish resolves, and by then
++            // the next transaction may already be half-assembled in
++            // currentTransaction — resetting it would drop its inserts.
++            const committed = currentTransaction;
+             const acknowledge = () => {
+-                state.lastProcessedLsn = currentTransaction.lsn;
+-                currentTransaction = emptyTransaction(state.lastProcessedLsn);
++                state.lastProcessedLsn = committed.lsn;
++                if (currentTransaction === committed) {
++                    currentTransaction = emptyTransaction(state.lastProcessedLsn);
++                }
+             };
+-            onInsert(currentTransaction, acknowledge);
++            onInsert(committed, acknowledge);
+         }
+     };
+     stream.on('data', (message) => {
+diff --git a/node_modules/@chassisjs/hermes-postgresql/lib/index.mjs b/node_modules/@chassisjs/hermes-postgresql/lib/index.mjs
+index 1aa5827..1c4b4a2 100644
+--- a/node_modules/@chassisjs/hermes-postgresql/lib/index.mjs
++++ b/node_modules/@chassisjs/hermes-postgresql/lib/index.mjs
+@@ -705,11 +705,18 @@ const startLogicalReplication = async (params) => {
+             acknowledgeLastLsn();
+         }
+         else if (result.topLevelType === TopLevelType.XLogData && result.messageType === MessageType.Commit) {
++            // PATCHED (bidflow): acknowledge exactly the transaction that was
++            // committed. It runs only after the publish resolves, and by then
++            // the next transaction may already be half-assembled in
++            // currentTransaction — resetting it would drop its inserts.
++            const committed = currentTransaction;
+             const acknowledge = () => {
+-                state.lastProcessedLsn = currentTransaction.lsn;
+-                currentTransaction = emptyTransaction(state.lastProcessedLsn);
++                state.lastProcessedLsn = committed.lsn;
++                if (currentTransaction === committed) {
++                    currentTransaction = emptyTransaction(state.lastProcessedLsn);
++                }
+             };
+-            onInsert(currentTransaction, acknowledge);
++            onInsert(committed, acknowledge);
+         }
+     };
+     stream.on('data', (message) => {

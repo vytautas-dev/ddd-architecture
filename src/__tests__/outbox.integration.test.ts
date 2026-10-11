@@ -16,8 +16,8 @@ import {
   unpausePulsar,
 } from "./support/pipeline";
 
-// Seam: command → Pulsar topic. Read models are not involved yet — they still
-// run through CatchUpSubscription.
+// Seam: command → Pulsar topic. No worker runs here, so read models are not
+// involved.
 
 const DAY = 24 * 60 * 60 * 1000;
 

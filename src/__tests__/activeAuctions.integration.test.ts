@@ -4,6 +4,7 @@ import { CreateAuctionHandler } from "../auction/application/commands/CreateAuct
 import { PlaceBidHandler } from "../auction/application/commands/PlaceBid";
 import { GetActiveAuctionsHandler } from "../auction/application/queries/GetActiveAuctions";
 import { AuctionRepository } from "../auction/infrastructure/AuctionRepository";
+import { ActiveAuctionsProjection } from "../auction/infrastructure/projections/ActiveAuctionsProjection";
 import { PrismaClient } from "../generated/prisma/client";
 import { withBehaviors } from "../shared/application/withBehaviors";
 import type { DomainEvent } from "../shared/domain/DomainEvent";
@@ -230,6 +231,35 @@ describe("active auctions view — topic message → view (seam 2)", () => {
 });
 
 describe("StreamOrderedProjection", () => {
+  it("rolls back the view write and the ledger together on failure, then converges", async () => {
+    const uow = new PrismaUnitOfWork(prisma);
+    const real = new ActiveAuctionsProjection(uow);
+    let healed = false;
+    // writes the view row first, then fails — the write must not survive
+    const failsAfterWriting: IProjection = {
+      async handle(event, meta) {
+        await real.handle(event, meta);
+        if (!healed) throw new Error("projection blew up after writing");
+      },
+    };
+    const guarded = new StreamOrderedProjection(
+      `rollback-${uuid()}`,
+      failsAfterWriting,
+      new StreamVersionLedger(uow),
+      uow,
+    );
+    const auctionId = uuid();
+    const envelope = created(auctionId, 1, "ACTIVE");
+
+    await expect(guarded.apply(envelope)).rejects.toThrow("blew up");
+    expect(await rowOf(auctionId)).toBeUndefined(); // view write rolled back
+
+    healed = true; // the redelivery after a fix converges
+    expect(await guarded.apply(envelope)).toBe("applied"); // ledger never moved
+    expect(await rowOf(auctionId)).toBeDefined();
+    expect(await guarded.apply(envelope)).toBe("duplicate");
+  });
+
   it("applies one version at most once under concurrent deliveries", async () => {
     const uow = new PrismaUnitOfWork(prisma);
     // slow enough that both deliveries read the ledger before either commits

@@ -162,3 +162,26 @@ export async function eventually<T>(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
+
+/**
+ * Messages delivered so far to each consumer currently attached to a
+ * subscription (admin REST API) — proves that work was actually shared.
+ */
+export async function deliveriesPerConsumer(
+  topic: string,
+  subscription: string,
+): Promise<number[]> {
+  const path = topic.replace("persistent://", "persistent/");
+  const response = await fetch(
+    `${process.env["PULSAR_ADMIN_URL"]}/admin/v2/${path}/stats`,
+  );
+  if (!response.ok) {
+    throw new Error(`stats for ${topic} failed: HTTP ${response.status}`);
+  }
+  const stats = (await response.json()) as {
+    subscriptions: Record<string, { consumers: { msgOutCounter: number }[] }>;
+  };
+  return (stats.subscriptions[subscription]?.consumers ?? []).map(
+    (consumer) => consumer.msgOutCounter,
+  );
+}

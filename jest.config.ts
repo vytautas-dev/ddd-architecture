@@ -9,8 +9,9 @@ const config: Config = {
   globalTeardown: "<rootDir>/jest.globalTeardown.ts",
   // Refuses to run if the containers are not up.
   setupFiles: ["<rootDir>/jest.setup.ts"],
-  // Integration test files share one database (some still TRUNCATE it), so
-  // test files must not run in parallel workers.
+  // Integration test files share one database and the same Pulsar
+  // subscriptions: a worker in one file would consume another file's events,
+  // so test files must not run in parallel workers.
   maxWorkers: 1,
   testTimeout: 30_000,
   // Hermes 1.0.0-alpha.16 stops its replication connection with
