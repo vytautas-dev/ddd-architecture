@@ -5,7 +5,12 @@ import { withBehaviors } from "../shared/application/withBehaviors";
 import { EventStore } from "../shared/infrastructure/EventStore";
 import { OutboxEventStore } from "../shared/infrastructure/messaging/OutboxEventStore";
 import { HERMES_SCHEMA } from "../shared/infrastructure/messaging/outboxRelay";
-import { TOPICS } from "../shared/infrastructure/messaging/topology";
+import {
+  DEAD_LETTER_SUBSCRIPTION,
+  deadLetterTopicFor,
+  PROJECTION_SUBSCRIPTIONS,
+  TOPICS,
+} from "../shared/infrastructure/messaging/topology";
 import { PostgresUnitOfWork } from "../shared/infrastructure/PostgresUnitOfWork";
 import { createPostgresClient } from "../shared/infrastructure/postgresClient";
 import {
@@ -97,6 +102,12 @@ describe("outbox → Pulsar (integration)", () => {
     expect(await subscriptionsOf(TOPICS.watchlist)).toEqual(
       expect.arrayContaining(["watchlist-favorites"]),
     );
+    // and every dead-letter topic already retains what will land there
+    for (const { topic, subscription } of PROJECTION_SUBSCRIPTIONS) {
+      expect(
+        await subscriptionsOf(deadLetterTopicFor(topic, subscription)),
+      ).toEqual([DEAD_LETTER_SUBSCRIPTION]);
+    }
   });
 });
 

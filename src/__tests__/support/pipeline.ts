@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID as uuid } from "node:crypto";
-import type { Consumer, Message } from "pulsar-client";
+import { type Consumer, type Message, MessageId } from "pulsar-client";
 import type { EventEnvelope } from "../../shared/infrastructure/messaging/EventEnvelope";
 import { createOutboxRelay } from "../../shared/infrastructure/messaging/outboxRelay";
 import { provisionSubscriptions } from "../../shared/infrastructure/messaging/provisionSubscriptions";
@@ -184,4 +184,28 @@ export async function deliveriesPerConsumer(
   return (stats.subscriptions[subscription]?.consumers ?? []).map(
     (consumer) => consumer.msgOutCounter,
   );
+}
+
+/**
+ * Every envelope currently on a topic, oldest first, read with a Reader — so
+ * nothing is consumed or acknowledged.
+ */
+export async function envelopesOn(
+  pulsar: ReturnType<typeof createPulsarClient>,
+  topic: string,
+): Promise<EventEnvelope[]> {
+  const reader = await pulsar.createReader({
+    topic,
+    startMessageId: MessageId.earliest(),
+  });
+  const envelopes: EventEnvelope[] = [];
+  try {
+    while (reader.hasNext()) {
+      const message = await reader.readNext(2_000);
+      envelopes.push(JSON.parse(message.getData().toString()) as EventEnvelope);
+    }
+  } finally {
+    await reader.close();
+  }
+  return envelopes;
 }
