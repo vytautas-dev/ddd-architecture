@@ -21,6 +21,7 @@ import { PrismaUnitOfWork } from "../shared/infrastructure/PrismaUnitOfWork";
 import { GetMyFavoritesHandler } from "../watchlist/application/queries/GetMyFavorites";
 import { AuctionCatalogProjection } from "../watchlist/infrastructure/projections/AuctionCatalogProjection";
 import { FavoritesProjection } from "../watchlist/infrastructure/projections/FavoritesProjection";
+import { EVENT_SCHEMAS } from "../worker";
 import { envelopesOn, eventually, publishEnvelope } from "./support/pipeline";
 
 // Scenarios 3 and 10: a poison event lands in the dead-letter topic instead of
@@ -71,6 +72,7 @@ async function startWorker(): Promise<void> {
         ledger,
         uow,
       ),
+      eventSchema: EVENT_SCHEMAS[topic],
       nackRedeliveryMs: 100,
       maxRedeliveries: 2,
     });

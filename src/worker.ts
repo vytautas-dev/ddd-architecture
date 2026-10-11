@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import type { Client } from "pulsar-client";
+import { auctionEventSchema } from "./auction/infrastructure/messaging/auctionEventSchemas";
 import { ActiveAuctionsProjection } from "./auction/infrastructure/projections/ActiveAuctionsProjection";
 import { PrismaClient } from "./generated/prisma/client";
 import type { IProjection } from "./shared/domain/IProjection";
@@ -13,8 +14,15 @@ import { StreamOrderedProjection } from "./shared/infrastructure/messaging/Strea
 import { StreamVersionLedger } from "./shared/infrastructure/messaging/StreamVersionLedger";
 import { TOPICS } from "./shared/infrastructure/messaging/topology";
 import { PrismaUnitOfWork } from "./shared/infrastructure/PrismaUnitOfWork";
+import { watchlistEventSchema } from "./watchlist/infrastructure/messaging/watchlistEventSchemas";
 import { AuctionCatalogProjection } from "./watchlist/infrastructure/projections/AuctionCatalogProjection";
 import { FavoritesProjection } from "./watchlist/infrastructure/projections/FavoritesProjection";
+
+/** Each topic carries one context's events, validated against its schema. */
+export const EVENT_SCHEMAS = {
+  [TOPICS.auction]: auctionEventSchema,
+  [TOPICS.watchlist]: watchlistEventSchema,
+};
 
 /**
  * The worker process: consumes Pulsar and keeps read models up to date. Any
@@ -44,6 +52,7 @@ export function createWorker(deps: {
         ledger,
         uow,
       ),
+      eventSchema: EVENT_SCHEMAS[topic],
       nackRedeliveryMs: deps.nackRedeliveryMs,
       maxRedeliveries: deps.maxRedeliveries,
     });

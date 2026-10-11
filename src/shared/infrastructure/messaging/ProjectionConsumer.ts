@@ -1,5 +1,7 @@
 import type { Client, Consumer, Message } from "pulsar-client";
-import type { EventEnvelope } from "./EventEnvelope";
+import type { z } from "zod";
+import type { DomainEvent } from "../../domain/DomainEvent";
+import { parseEnvelope } from "./EventEnvelope";
 import { isReceiveTimeout } from "./pulsar";
 import {
   StreamGapError,
@@ -17,6 +19,8 @@ export interface ProjectionConsumerOptions {
   /** Must be one of the subscriptions the API provisions. */
   subscription: ProjectionSubscriptionName;
   projection: StreamOrderedProjection;
+  /** Schema of the events on `topic`, owned by the context that publishes them. */
+  eventSchema: z.ZodType<DomainEvent, unknown>;
   /** How long Pulsar waits before redelivering a nacked message. */
   nackRedeliveryMs?: number;
   /** Redeliveries before a message moves to the dead-letter topic. */
@@ -82,9 +86,11 @@ export class ProjectionConsumer {
         continue;
       }
       try {
-        const envelope = JSON.parse(
-          message.getData().toString(),
-        ) as EventEnvelope;
+        // a malformed message throws here, like any failure: nack, then DLQ
+        const envelope = parseEnvelope(
+          message.getData(),
+          this.options.eventSchema,
+        );
         await this.options.projection.apply(envelope);
         await consumer.acknowledge(message);
       } catch (error) {

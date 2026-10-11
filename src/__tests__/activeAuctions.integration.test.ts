@@ -370,5 +370,6 @@ function closed(auctionId: string, version: number) {
     eventType: "AuctionClosed",
     occurredAt: new Date(),
     auctionId,
+    winnerId: null,
   });
 }

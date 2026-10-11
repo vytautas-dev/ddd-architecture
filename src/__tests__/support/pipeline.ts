@@ -188,7 +188,8 @@ export async function deliveriesPerConsumer(
 
 /**
  * Every envelope currently on a topic, oldest first, read with a Reader — so
- * nothing is consumed or acknowledged.
+ * nothing is consumed or acknowledged. Messages that are not JSON (tests put
+ * some on dead-letter topics on purpose) are skipped.
  */
 export async function envelopesOn(
   pulsar: ReturnType<typeof createPulsarClient>,
@@ -202,7 +203,13 @@ export async function envelopesOn(
   try {
     while (reader.hasNext()) {
       const message = await reader.readNext(2_000);
-      envelopes.push(JSON.parse(message.getData().toString()) as EventEnvelope);
+      try {
+        envelopes.push(
+          JSON.parse(message.getData().toString()) as EventEnvelope,
+        );
+      } catch {
+        // not an envelope at all — not what the caller is looking for
+      }
     }
   } finally {
     await reader.close();

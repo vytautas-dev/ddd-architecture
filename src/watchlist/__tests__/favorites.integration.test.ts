@@ -26,7 +26,7 @@ import { TOPICS } from "../../shared/infrastructure/messaging/topology";
 import { PostgresUnitOfWork } from "../../shared/infrastructure/PostgresUnitOfWork";
 import { PrismaUnitOfWork } from "../../shared/infrastructure/PrismaUnitOfWork";
 import { createPostgresClient } from "../../shared/infrastructure/postgresClient";
-import { createWorker } from "../../worker";
+import { createWorker, EVENT_SCHEMAS } from "../../worker";
 import { FavoriteAuctionHandler } from "../application/commands/FavoriteAuction";
 import { UnfavoriteAuctionHandler } from "../application/commands/UnfavoriteAuction";
 import { GetMyFavoritesHandler } from "../application/queries/GetMyFavorites";
@@ -388,6 +388,7 @@ describe("Favorites — one failing view does not stall the others", () => {
           ledger,
           uow,
         ),
+        eventSchema: EVENT_SCHEMAS[topic],
         nackRedeliveryMs: 200,
       });
     const consumers = [
