@@ -24,6 +24,7 @@ export function createWorker(deps: {
   prisma: PrismaClient;
   pulsar: Client;
   nackRedeliveryMs?: number;
+  maxRedeliveries?: number;
 }) {
   const uow = new PrismaUnitOfWork(deps.prisma);
   const ledger = new StreamVersionLedger(uow);
@@ -44,6 +45,7 @@ export function createWorker(deps: {
         uow,
       ),
       nackRedeliveryMs: deps.nackRedeliveryMs,
+      maxRedeliveries: deps.maxRedeliveries,
     });
   const consumers = [
     consumer(

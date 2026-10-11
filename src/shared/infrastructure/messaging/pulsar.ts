@@ -6,3 +6,9 @@ export function createPulsarClient(serviceUrl: string | undefined): Client {
   }
   return new Client({ serviceUrl });
 }
+
+/** pulsar-client rejects a timed-out receive with "Failed to receive message: TimeOut". */
+export function isReceiveTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.endsWith(": TimeOut");
+}
