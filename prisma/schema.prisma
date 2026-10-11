@@ -69,3 +69,16 @@ model ProjectionCheckpoint {
 
   @@map("projection_checkpoints")
 }
+
+/// The stream version ledger: per projection and stream, the last event
+/// version applied. Lets a projection apply events strictly in stream order
+/// and drop duplicates, whatever order the broker delivers them in.
+model ProjectionStreamVersion {
+  projectionName String
+  streamId       String
+  version        Int
+  updatedAt      DateTime @updatedAt
+
+  @@id([projectionName, streamId])
+  @@map("projection_stream_versions")
+}

@@ -120,3 +120,45 @@ function requiredEnv(name: string): string {
     throw new Error(`${name} is not set — jest.globalSetup.ts sets it`);
   return value;
 }
+
+/** Publishes an envelope straight to its topic, keyed like the relay does. */
+export async function publishEnvelope(
+  pulsar: ReturnType<typeof createPulsarClient>,
+  topic: string,
+  envelope: EventEnvelope,
+): Promise<void> {
+  const producer = await pulsar.createProducer({
+    topic,
+    batchingEnabled: false,
+  });
+  try {
+    await producer.send({
+      data: Buffer.from(JSON.stringify(envelope)),
+      partitionKey: envelope.streamId,
+    });
+  } finally {
+    await producer.close();
+  }
+}
+
+/**
+ * Polls `read` until `done` holds, then returns the value. Views are
+ * eventually consistent, so tests wait for a state instead of sleeping.
+ */
+export async function eventually<T>(
+  read: () => Promise<T>,
+  done: (value: T) => boolean,
+  timeoutMs = 15_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await read();
+    if (done(value)) return value;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `condition not met within ${timeoutMs} ms; last value: ${JSON.stringify(value)}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}

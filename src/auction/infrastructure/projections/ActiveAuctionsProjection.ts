@@ -1,13 +1,29 @@
 import type { DomainEvent } from "../../../shared/domain/DomainEvent";
-import type { IProjection } from "../../../shared/domain/IProjection";
+import type {
+  EventMetadata,
+  IProjection,
+} from "../../../shared/domain/IProjection";
 import type { PrismaUnitOfWork } from "../../../shared/infrastructure/PrismaUnitOfWork";
 import type { AuctionDomainEvent } from "../../domain/AuctionEvents";
 
 export class ActiveAuctionsProjection implements IProjection {
   constructor(private readonly uow: PrismaUnitOfWork) {}
 
-  async handle(event: DomainEvent): Promise<void> {
+  async handle(event: DomainEvent, meta: EventMetadata): Promise<void> {
     const e = event as AuctionDomainEvent;
+    const affectedRows = await this.apply(e);
+
+    // Events now arrive in stream order, so a missing row is an anomaly worth
+    // seeing — but not worth failing on: the view is a cache, not the truth.
+    if (affectedRows === 0) {
+      console.warn(
+        `[active-auctions] ${e.eventType} v${meta.version} of stream ${meta.streamId}: no row in active_auctions_view`,
+      );
+    }
+  }
+
+  /** Rows updated or deleted; undefined when the event inserts or is ignored. */
+  private async apply(e: AuctionDomainEvent): Promise<number | undefined> {
     switch (e.eventType) {
       case "AuctionCreated": {
         const row = {
@@ -26,26 +42,29 @@ export class ActiveAuctionsProjection implements IProjection {
           create: { id: e.auctionId, ...row },
           update: row,
         });
-        break;
+        return undefined;
       }
-      case "BidPlaced":
-        await this.uow.client.activeAuctionView.updateMany({
+      case "BidPlaced": {
+        const { count } = await this.uow.client.activeAuctionView.updateMany({
           where: { id: e.auctionId },
           data: { currentBid: e.amount.amount, totalBids: e.bidNumber },
         });
-        break;
-      case "AuctionStarted":
-        await this.uow.client.activeAuctionView.updateMany({
+        return count;
+      }
+      case "AuctionStarted": {
+        const { count } = await this.uow.client.activeAuctionView.updateMany({
           where: { id: e.auctionId },
           data: { status: "ACTIVE" },
         });
-        break;
+        return count;
+      }
       case "AuctionClosed":
-      case "AuctionCancelled":
-        await this.uow.client.activeAuctionView.deleteMany({
+      case "AuctionCancelled": {
+        const { count } = await this.uow.client.activeAuctionView.deleteMany({
           where: { id: e.auctionId },
         });
-        break;
+        return count;
+      }
     }
   }
 }

@@ -1,5 +1,5 @@
 import type { DomainEvent } from "../domain/DomainEvent";
-import type { IProjection } from "../domain/IProjection";
+import type { EventMetadata, IProjection } from "../domain/IProjection";
 import type { PrismaUnitOfWork } from "./PrismaUnitOfWork";
 
 export class CatchUpSubscription {
@@ -49,6 +49,7 @@ export class CatchUpSubscription {
         await this.dispatch(
           record.streamType,
           record.payload as unknown as DomainEvent,
+          { streamId: record.streamId, version: record.version },
         );
         await this.saveCheckpoint(record.position);
       });
@@ -72,9 +73,10 @@ export class CatchUpSubscription {
   private async dispatch(
     streamType: string,
     event: DomainEvent,
+    meta: EventMetadata,
   ): Promise<void> {
     for (const projection of this.projections[streamType] ?? []) {
-      await projection.handle(event);
+      await projection.handle(event, meta);
     }
   }
 

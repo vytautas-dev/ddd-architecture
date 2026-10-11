@@ -9,7 +9,6 @@ import { PlaceBidHandler } from "./auction/application/commands/PlaceBid";
 import { StartAuctionHandler } from "./auction/application/commands/StartAuction";
 import { GetActiveAuctionsHandler } from "./auction/application/queries/GetActiveAuctions";
 import { AuctionRepository } from "./auction/infrastructure/AuctionRepository";
-import { ActiveAuctionsProjection } from "./auction/infrastructure/projections/ActiveAuctionsProjection";
 import { PrismaClient } from "./generated/prisma/client";
 import { withBehaviors } from "./shared/application/withBehaviors";
 import { CatchUpSubscription } from "./shared/infrastructure/CatchUpSubscription";
@@ -53,7 +52,6 @@ const relay = createOutboxRelay({
   consumerName: "bidflow_api",
 });
 const readModelUow = new PrismaUnitOfWork(prisma);
-const activeAuctionsProjection = new ActiveAuctionsProjection(readModelUow);
 const favoritesProjection = new FavoritesProjection(readModelUow);
 const auctionCatalogProjection = new AuctionCatalogProjection(readModelUow);
 const eventStore = new OutboxEventStore(
@@ -64,10 +62,12 @@ const eventStore = new OutboxEventStore(
 const auctionRepository = new AuctionRepository(eventStore);
 const watchlistRepository = new WatchlistRepository(eventStore);
 const auctionCatalog = new ReadModelAuctionCatalog(readModelUow);
+// Active auctions are served by the worker (src/worker.ts) from Pulsar; the
+// Watchlist views still run through the polling subscription.
 const readModels = new CatchUpSubscription(
   readModelUow,
   {
-    auction: [activeAuctionsProjection, auctionCatalogProjection],
+    auction: [auctionCatalogProjection],
     watchlist: [favoritesProjection],
   },
   "read-models",
