@@ -5,6 +5,130 @@ Newest entry on top. Date format: `YYYY-MM-DD`.
 
 ---
 
+## 2026-10-11 — Step 3B: read models fed through Pulsar via a Hermes outbox
+
+**Topic:** the polling `CatchUpSubscription` is gone. Commands put their events into a transactional outbox, Hermes relays the outbox to Apache Pulsar, and a separate worker builds the read models from Pulsar. Decided in [ADR-0001](docs/adr/0001-pulsar-transport-via-hermes-outbox.md), specified in [spec #5](https://github.com/vytautas-dev/ddd-architecture/issues/5), built in tickets #7–#15 (PRs #17–#25).
+
+### How it works now
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    participant H as Command Handler
+    participant DB as Postgres (event_store + hermes outbox)
+    participant R as Hermes relay (in the API process)
+    participant T as Pulsar topic auction-events
+    participant W as Worker: ProjectionConsumer
+    participant L as projection_stream_versions
+    participant V as View
+
+    Note over C,DB: Transaction 1, the command (Postgres.js)
+    C->>H: POST /auctions/:id/bids
+    H->>DB: INSERT event_store (version) + outbox.queue(envelope, { tx })
+    DB-->>H: COMMIT, both or neither
+    H-->>C: 200
+
+    Note over DB,T: Relay, through logical replication (WAL, commit order)
+    R->>DB: read the committed outbox rows from the replication slot
+    R->>T: send(envelope), key = streamId
+    R->>DB: acknowledge the WAL position (LSN) only after Pulsar confirmed
+
+    Note over T,V: Transaction 2, one per message, per projection (Prisma)
+    T->>W: Key_Shared subscription "active-auctions"
+    W->>W: parseEnvelope (Zod): revive Dates, reject malformed
+    W->>L: last applied version of this stream
+    alt next version
+        W->>V: projection.handle(event, { streamId, version })
+        W->>L: advance last → version (compare-and-set)
+        W->>T: ack
+    else already applied
+        W->>T: ack (duplicate)
+    else gap, or the projection threw
+        W->>T: nack → redelivered after 1 s, at most 10 times → <topic>-<subscription>-DLQ
+    end
+```
+
+The `event_store` is still the source of truth: aggregates reconstitute from it and optimistic concurrency is unchanged. Pulsar only carries the events.
+
+### What changed
+
+- **#7: the command side moved to Postgres.js** behind the unchanged `IUnitOfWork` / `IEventStore` ports (`PostgresUnitOfWork`, a rewritten `EventStore`). Hermes accepts only a Postgres.js transaction, and Prisma has no Postgres.js adapter. Handlers, `withBehaviors`, retry and the domain did not change. Prisma stays for read models, queries and migrations.
+- **#8: tests run on Testcontainers.** `npm test` starts Postgres 16 (`wal_level=logical`) and Pulsar 4.0.14 once per run. `docker-compose.yml` gained Pulsar and **Dekaf** (Pulsar web UI on `:8090`, local dev only).
+- **#9: outbox and relay.** `OutboxEventStore` decorates `EventStore`: append plus `outbox.queue(envelopes, { tx })` in the same transaction. `createOutboxRelay` publishes each envelope to its aggregate's topic, keyed by `streamId`. Before Hermes starts, the API creates every projection subscription (`provisionSubscriptions`).
+- **#10: worker and stream version ledger.** `src/worker.ts`, `ProjectionConsumer`, `StreamOrderedProjection`, `StreamVersionLedger`, and `IProjection.handle(event, meta)`. Active auctions is the first view fed from Pulsar. The migration wiped existing data (spec #5, decision 16) instead of seeding the ledger.
+- **#11: the Watchlist views come from Pulsar.** The `favorites_view → catalog` FK was dropped (`relationMode = "prisma"`). `GetMyFavorites` hides favorites whose catalog row has not arrived yet. `reportMissingRow` logs a warning when an event finds no row.
+- **#12: `CatchUpSubscription`, `projection_checkpoints` and `event_store.position` were removed.** Scenario 4 (two workers) proves that views stay correct when the load is shared. Hermes is patched (below).
+- **#13: dead-letter topic per subscription** and `npm run dlq:replay -- <subscription>`.
+- **#14: Zod at the worker boundary.** Each context owns the schemas of its own events. Dates arrive as real `Date` objects, and an unknown `eventType` goes to the DLQ.
+- **#15: `npm run projections:status [-- --frozen-after <s>]`.** A read-only report of streams whose ledger is behind `max(version)` in `event_store`, with the gap. A stream that has waited past the threshold is flagged frozen.
+
+### Decision: an outbox, not publish-after-commit
+
+Sending to Pulsar after the commit is a **dual write**: a crash between `COMMIT` and `send` loses the event forever, and nobody notices. With an outbox the event and its "please publish" row commit together, and the relay retries until Pulsar confirms. Two alternatives were rejected. A polling relay would keep the polling and the gap trap. Hand-rolled logical replication on `event_store` would mean writing LSN acknowledgement and resume-after-crash ourselves, which is where subtle bugs hide. That last reason proved true: the bug below sat exactly there, inside a library.
+
+### Decision: projections enforce order, not the broker
+
+`Key_Shared` keeps a key on one consumer, but a nack redelivers a message *after* newer ones. So the order comes from the ledger: apply the next version, skip an old one, nack a gap. A per-row `lastVersion` guard was rejected. It silently drops an older event that changes *different* columns: `AuctionStarted` arriving after `BidPlaced` would be ignored, leaving the price right and the status wrong. Scenario 9 tests exactly that, and a mutation (treating a gap as "apply") breaks it.
+
+### Decision: one subscription per projection
+
+Each view has its own cursor, so a failing projection stalls only itself. This reverses step 3A's "one subscriber for all", whose only reason was the favorites → catalog FK. Independent subscriptions on two topics have no cross-topic order, so the FK went. The `count: 0` question parked since step 2 is closed the same way: with the ledger, events arrive in stream order, so a missing row is a real anomaly and is **logged as a warning**, not dead-lettered.
+
+### Decision: Pulsar's built-in retry and dead-letter
+
+A nack is redelivered after a fixed 1 s delay, at most 10 times, and then goes to `<topic>-<subscription>-DLQ`. The Node client has no exponential backoff. A gap nack also counts as a redelivery, so a poison event takes the rest of its stream into the DLQ with it. One auction freezes loudly in one view while everything else keeps moving. `dlq:replay` sends the dead letters back to the source topic. The other subscriptions see the copies too and drop them as duplicates thanks to the ledger.
+
+### The gap trap is gone, for a different reason than planned
+
+Step 3A planned to fix the `BIGSERIAL` gap trap with `pg_snapshot_xmin`. That fix was never needed. Hermes reads the WAL, and the WAL delivers transactions in **commit** order, not in the order they started. A transaction that began first but committed last is published last, and nothing is skipped. Scenario 2 holds one transaction open on purpose to prove it. `position` had no reader left, so it was dropped.
+
+### The bug that scenario 4 found in Hermes
+
+Scenario 4 (20 auctions × 5 bids in parallel, two workers) failed **2 of 15 runs**. Diagnostics showed version 7 of one auction present in `event_store` and in the outbox, but never on the topic. The cause is in `@chassisjs/hermes-postgresql` 1.0.0-alpha.16. On `COMMIT`, Hermes hands the transaction to `publish` together with an `acknowledge` callback. That callback runs only after the publish resolves, and it read the *current* transaction. By then the next transaction could already be half-assembled in that variable, so acknowledging reset it and its inserts were lost. The fix (`patches/@chassisjs+hermes-postgresql+1.0.0-alpha.16.patch`, applied by `patch-package` on every `npm install`) captures the committed transaction at `COMMIT` and resets only that one. After the patch scenario 4 passed **15 of 15** runs. Not reported upstream, by the user's choice.
+
+Two lessons:
+- Only a test with many short concurrent transactions opened that window. The single-command live tests and the two-transaction gap-trap test never did.
+- The ledger turned a silent loss into a visible symptom. The view did not go wrong; the auction got **stuck**, waiting for a version that never came.
+
+Other Hermes findings, worked around rather than patched:
+- `1.0.0-alpha.17` was published without its `lib/`, so the version is pinned exactly.
+- It passes milliseconds to postgres.js `end({ timeout })`, which expects seconds, so shutdown hangs and Jest needs `forceExit`.
+- Its non-serialized mode leaves a retry interval running and does not publish in commit order, so the relay runs with `serialization: true`.
+- `consumerName` is a `varchar(30)`.
+
+### Costs carried forward
+
+- **Watchlist consumes Auction's domain events directly.** No integration events and no separate public contract yet. This is the planned next step.
+- **The API runs as a single instance**, because Hermes holds the replication slot exclusively. The way out is one Hermes `partitionKey` (and slot) per instance. Not built.
+- **A false 404 when favoriting a freshly created auction (3C).** The catalog is eventually consistent and the command reads it through the ACL.
+- **The redelivery delay is fixed** (1 s × 10). The Node client has no backoff.
+- **A long *transient* failure freezes healthy streams too.** For example, the database down for longer than 10 redeliveries dead-letters messages that were fine. They need a manual `dlq:replay`, and `projections:status` points at them.
+- **A projection that writes a wrong value without throwing stays wrong.** The ledger moved on, so `projections:status` sees nothing. Only a rebuild heals it, and rebuild is out of scope.
+- **The Hermes patch** has to be removed once a fixed version is released, and the replication slot holds WAL while the API is down.
+
+### Verification
+
+Only what was actually run:
+- The full suite after #15: **18 suites, 110 tests green**, `tsc --noEmit` clean.
+- Scenarios 1–12 from spec #5 are integration tests on Testcontainers.
+- Mutation checks that turned a test red:
+  - rollback publishing anyway (scenario 8);
+  - a gap treated as "apply" (scenario 9);
+  - the ledger guard without a transaction;
+  - no `deadLetterPolicy` (scenario 3);
+  - bare `JSON.parse` instead of Zod (#14).
+- Hermes patch: 2 of 15 runs failed without it, 15 of 15 passed with it.
+- Live against the compose stack (`npm run dev`, plus `npm run worker` from #10 on):
+  - `POST /auctions` → 201, and the envelope was read from `auction-events`, keyed by `streamId` (#9);
+  - a bid → `{ ACTIVE, currentBid: 150, totalBids: 1 }`, with the ledger at `active-auctions v2` (#10);
+  - favorite → start → `[Krzesło, ACTIVE]` in favorites, and favoriting again → 422 (#11);
+  - `dlq:replay` → "Replayed 0" (#13);
+  - `projections:status` → "All projections caught up." (#15).
+- Hermes tables live in the `hermes` schema, and `prisma migrate diff` stays empty.
+
+---
+
 ## 2026-08-20 — Step 3A: projections leave the command transaction
 
 **Topic:** read models stop being written by the command and start being *pulled* from the event log by a subscriber that remembers where it stopped. Three sub-steps: the log gets a global order and the subscriber gets a bookmark (3A.1), the subscriber is written (3A.2), the switch is flipped (3A.3).
