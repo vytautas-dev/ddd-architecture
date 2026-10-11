@@ -1,4 +1,4 @@
-import type { PrismaUnitOfWork } from "../../shared/infrastructure/PrismaUnitOfWork";
+import type { PrismaClient } from "../../generated/prisma/client";
 import type {
   AuctionForFavoriting,
   IAuctionCatalog,
@@ -7,13 +7,14 @@ import type {
 /**
  * Anti-Corruption Layer over the Auction context. Reads the Watchlist-owned
  * catalog (built from Auction events) and translates the auction lifecycle
- * into the single question the Watchlist actually asks.
+ * into the single question the Watchlist actually asks. Reads outside the
+ * command's transaction: the catalog is eventually consistent anyway.
  */
 export class ReadModelAuctionCatalog implements IAuctionCatalog {
-  constructor(private readonly uow: PrismaUnitOfWork) {}
+  constructor(private readonly prisma: PrismaClient) {}
 
   async findForFavoriting(auctionId: string): Promise<AuctionForFavoriting> {
-    const row = await this.uow.client.watchlistAuctionCatalog.findUnique({
+    const row = await this.prisma.watchlistAuctionCatalog.findUnique({
       where: { auctionId },
       select: { status: true },
     });
