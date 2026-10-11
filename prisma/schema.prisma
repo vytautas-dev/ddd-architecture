@@ -19,7 +19,6 @@ model EventStore {
   payload    Json
   version    Int
   occurredAt DateTime @default(now())
-  position   BigInt   @unique @default(autoincrement())
 
   @@unique([streamId, version])
   @@index([streamId])
@@ -65,14 +64,6 @@ model FavoriteView {
   @@id([bidderId, auctionId])
   @@index([auctionId])
   @@map("favorites_view")
-}
-
-model ProjectionCheckpoint {
-  subscriberName String   @id
-  position       BigInt   @default(0)
-  updatedAt      DateTime @updatedAt
-
-  @@map("projection_checkpoints")
 }
 
 /// The stream version ledger: per projection and stream, the last event
