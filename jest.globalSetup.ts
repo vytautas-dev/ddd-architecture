@@ -43,6 +43,11 @@ export default async function globalSetup(): Promise<void> {
   process.env["DATABASE_URL"] = databaseUrl;
   process.env["PULSAR_URL"] =
     `pulsar://${pulsar.getHost()}:${pulsar.getMappedPort(6650)}`;
+  // pipeline tests inspect subscriptions over the admin REST API and pause the
+  // broker to simulate an outage
+  process.env["PULSAR_ADMIN_URL"] =
+    `http://${pulsar.getHost()}:${pulsar.getMappedPort(8080)}`;
+  process.env["PULSAR_CONTAINER_ID"] = pulsar.getId();
   // set last, only once everything is up — jest.setup.ts checks it
   process.env["BIDFLOW_TEST_CONTAINERS"] = "1";
 }

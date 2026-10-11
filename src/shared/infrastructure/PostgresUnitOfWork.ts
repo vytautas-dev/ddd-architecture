@@ -23,4 +23,9 @@ export class PostgresUnitOfWork implements IUnitOfWork {
   get client(): Sql | TransactionSql {
     return this.storage.getStore() ?? this.sql;
   }
+
+  /** The transaction of the current `run()`, if any. */
+  get transaction(): TransactionSql | undefined {
+    return this.storage.getStore();
+  }
 }
