@@ -138,10 +138,16 @@ Update this section when a stage is completed.
 
 ## Agent skills
 
+AI SDLC flow (grilling → spec → tickets → implementation), see `docs/ai-sdlc-flow.md`. Skills live in `.agents/skills/` (symlinked into `.claude/skills/`), upstream versions pinned in `skills-lock.json`.
+
 ### Issue tracker
 
-Specs and tickets live as markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+Specs (PRDs) and tickets live in GitHub Issues: the spec is the parent issue, its tickets are sub-issues. `.scratch/` is local-only working notes, never the publish target. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` + `docs/adr/` at the repo root, both created lazily by `/domain-modeling`. See `docs/agents/domain.md`.
+Single-context: one `GLOSSARY.md` at the repo root covering both bounded contexts (a section per context), ADRs in `docs/adr/`, business rules in `ABOUT.md`/`PLAN.md`. See `docs/agents/domain.md`.
