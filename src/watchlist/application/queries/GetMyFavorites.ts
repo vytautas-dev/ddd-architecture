@@ -27,13 +27,18 @@ export class GetMyFavoritesHandler {
       include: { auction: true },
     });
 
-    return rows.map((r) => ({
-      auctionId: r.auctionId,
-      title: r.auction.title,
-      startsAt: r.auction.startsAt,
-      status: r.auction.status,
-      currentBid: r.auction.currentBid,
-      currency: r.auction.currency,
-    }));
+    // No foreign key ties a favorite to its catalog row (they are projected from
+    // different topics), so a favorite can briefly exist before the auction is
+    // catalogued. Leave it out until the catalog catches up.
+    return rows
+      .filter((r) => r.auction !== null)
+      .map((r) => ({
+        auctionId: r.auctionId,
+        title: r.auction.title,
+        startsAt: r.auction.startsAt,
+        status: r.auction.status,
+        currentBid: r.auction.currentBid,
+        currency: r.auction.currency,
+      }));
   }
 }

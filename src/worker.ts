@@ -3,12 +3,18 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import type { Client } from "pulsar-client";
 import { ActiveAuctionsProjection } from "./auction/infrastructure/projections/ActiveAuctionsProjection";
 import { PrismaClient } from "./generated/prisma/client";
-import { ProjectionConsumer } from "./shared/infrastructure/messaging/ProjectionConsumer";
+import type { IProjection } from "./shared/domain/IProjection";
+import {
+  ProjectionConsumer,
+  type ProjectionConsumerOptions,
+} from "./shared/infrastructure/messaging/ProjectionConsumer";
 import { createPulsarClient } from "./shared/infrastructure/messaging/pulsar";
 import { StreamOrderedProjection } from "./shared/infrastructure/messaging/StreamOrderedProjection";
 import { StreamVersionLedger } from "./shared/infrastructure/messaging/StreamVersionLedger";
 import { TOPICS } from "./shared/infrastructure/messaging/topology";
 import { PrismaUnitOfWork } from "./shared/infrastructure/PrismaUnitOfWork";
+import { AuctionCatalogProjection } from "./watchlist/infrastructure/projections/AuctionCatalogProjection";
+import { FavoritesProjection } from "./watchlist/infrastructure/projections/FavoritesProjection";
 
 /**
  * The worker process: consumes Pulsar and keeps read models up to date. Any
@@ -21,18 +27,40 @@ export function createWorker(deps: {
 }) {
   const uow = new PrismaUnitOfWork(deps.prisma);
   const ledger = new StreamVersionLedger(uow);
-  const consumers = [
+  // One subscription — one cursor — per projection: a failing view stalls
+  // only itself.
+  const consumer = (
+    topic: ProjectionConsumerOptions["topic"],
+    subscription: ProjectionConsumerOptions["subscription"],
+    projection: IProjection,
+  ) =>
     new ProjectionConsumer(deps.pulsar, {
-      topic: TOPICS.auction,
-      subscription: "active-auctions",
+      topic,
+      subscription,
       projection: new StreamOrderedProjection(
-        "active-auctions",
-        new ActiveAuctionsProjection(uow),
+        subscription,
+        projection,
         ledger,
         uow,
       ),
       nackRedeliveryMs: deps.nackRedeliveryMs,
-    }),
+    });
+  const consumers = [
+    consumer(
+      TOPICS.auction,
+      "active-auctions",
+      new ActiveAuctionsProjection(uow),
+    ),
+    consumer(
+      TOPICS.auction,
+      "watchlist-auction-catalog",
+      new AuctionCatalogProjection(uow),
+    ),
+    consumer(
+      TOPICS.watchlist,
+      "watchlist-favorites",
+      new FavoritesProjection(uow),
+    ),
   ];
 
   return {

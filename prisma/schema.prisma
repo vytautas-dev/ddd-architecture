@@ -4,7 +4,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider     = "postgresql"
+  // Relations live in the Prisma client (joins, filters, orderBy) but are not
+  // FOREIGN KEYs in the database: read models are fed from separate topics
+  // with no cross-topic order, so a favorite may land before its catalog row.
+  relationMode = "prisma"
 }
 
 model EventStore {
@@ -59,6 +63,7 @@ model FavoriteView {
   auction WatchlistAuctionCatalog @relation(fields: [auctionId], references: [auctionId])
 
   @@id([bidderId, auctionId])
+  @@index([auctionId])
   @@map("favorites_view")
 }
 

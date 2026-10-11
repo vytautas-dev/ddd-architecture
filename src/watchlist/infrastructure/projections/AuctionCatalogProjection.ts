@@ -1,13 +1,24 @@
 import type { AuctionDomainEvent } from "../../../auction/domain/AuctionEvents";
 import type { DomainEvent } from "../../../shared/domain/DomainEvent";
-import type { IProjection } from "../../../shared/domain/IProjection";
+import type {
+  EventMetadata,
+  IProjection,
+} from "../../../shared/domain/IProjection";
+import { reportMissingRow } from "../../../shared/infrastructure/messaging/reportMissingRow";
 import type { PrismaUnitOfWork } from "../../../shared/infrastructure/PrismaUnitOfWork";
 
 export class AuctionCatalogProjection implements IProjection {
   constructor(private readonly uow: PrismaUnitOfWork) {}
 
-  async handle(event: DomainEvent): Promise<void> {
+  async handle(event: DomainEvent, meta: EventMetadata): Promise<void> {
     const e = event as AuctionDomainEvent;
+    if ((await this.apply(e)) === 0) {
+      reportMissingRow("watchlist-auction-catalog", e.eventType, meta);
+    }
+  }
+
+  /** Rows updated; undefined when the event inserts or is ignored. */
+  private async apply(e: AuctionDomainEvent): Promise<number | undefined> {
     switch (e.eventType) {
       case "AuctionCreated": {
         const row = {
@@ -22,32 +33,28 @@ export class AuctionCatalogProjection implements IProjection {
           create: { auctionId: e.auctionId, ...row },
           update: row,
         });
-        break;
+        return undefined;
       }
       case "AuctionStarted":
-        await this.uow.client.watchlistAuctionCatalog.updateMany({
-          where: { auctionId: e.auctionId },
-          data: { status: "ACTIVE" },
-        });
-        break;
+        return this.update(e.auctionId, { status: "ACTIVE" });
       case "BidPlaced":
-        await this.uow.client.watchlistAuctionCatalog.updateMany({
-          where: { auctionId: e.auctionId },
-          data: { currentBid: e.amount.amount },
-        });
-        break;
+        return this.update(e.auctionId, { currentBid: e.amount.amount });
+      // the catalog keeps finished auctions: "not upcoming" ≠ "not found"
       case "AuctionClosed":
-        await this.uow.client.watchlistAuctionCatalog.updateMany({
-          where: { auctionId: e.auctionId },
-          data: { status: "CLOSED" },
-        });
-        break;
+        return this.update(e.auctionId, { status: "CLOSED" });
       case "AuctionCancelled":
-        await this.uow.client.watchlistAuctionCatalog.updateMany({
-          where: { auctionId: e.auctionId },
-          data: { status: "CANCELLED" },
-        });
-        break;
+        return this.update(e.auctionId, { status: "CANCELLED" });
     }
+  }
+
+  private async update(
+    auctionId: string,
+    data: { status?: "ACTIVE" | "CLOSED" | "CANCELLED"; currentBid?: number },
+  ): Promise<number> {
+    const { count } = await this.uow.client.watchlistAuctionCatalog.updateMany({
+      where: { auctionId },
+      data,
+    });
+    return count;
   }
 }

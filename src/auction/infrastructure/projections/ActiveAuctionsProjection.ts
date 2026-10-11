@@ -3,6 +3,7 @@ import type {
   EventMetadata,
   IProjection,
 } from "../../../shared/domain/IProjection";
+import { reportMissingRow } from "../../../shared/infrastructure/messaging/reportMissingRow";
 import type { PrismaUnitOfWork } from "../../../shared/infrastructure/PrismaUnitOfWork";
 import type { AuctionDomainEvent } from "../../domain/AuctionEvents";
 
@@ -11,14 +12,8 @@ export class ActiveAuctionsProjection implements IProjection {
 
   async handle(event: DomainEvent, meta: EventMetadata): Promise<void> {
     const e = event as AuctionDomainEvent;
-    const affectedRows = await this.apply(e);
-
-    // Events now arrive in stream order, so a missing row is an anomaly worth
-    // seeing — but not worth failing on: the view is a cache, not the truth.
-    if (affectedRows === 0) {
-      console.warn(
-        `[active-auctions] ${e.eventType} v${meta.version} of stream ${meta.streamId}: no row in active_auctions_view`,
-      );
+    if ((await this.apply(e)) === 0) {
+      reportMissingRow("active-auctions", e.eventType, meta);
     }
   }
 

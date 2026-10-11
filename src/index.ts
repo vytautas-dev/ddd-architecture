@@ -11,7 +11,6 @@ import { GetActiveAuctionsHandler } from "./auction/application/queries/GetActiv
 import { AuctionRepository } from "./auction/infrastructure/AuctionRepository";
 import { PrismaClient } from "./generated/prisma/client";
 import { withBehaviors } from "./shared/application/withBehaviors";
-import { CatchUpSubscription } from "./shared/infrastructure/CatchUpSubscription";
 import { EventStore } from "./shared/infrastructure/EventStore";
 import { OutboxEventStore } from "./shared/infrastructure/messaging/OutboxEventStore";
 import {
@@ -21,23 +20,21 @@ import {
 import { provisionSubscriptions } from "./shared/infrastructure/messaging/provisionSubscriptions";
 import { createPulsarClient } from "./shared/infrastructure/messaging/pulsar";
 import { PostgresUnitOfWork } from "./shared/infrastructure/PostgresUnitOfWork";
-import { PrismaUnitOfWork } from "./shared/infrastructure/PrismaUnitOfWork";
 import { createPostgresClient } from "./shared/infrastructure/postgresClient";
 import { watchlistRouter } from "./watchlist/api/watchlistRouter";
 import { FavoriteAuctionHandler } from "./watchlist/application/commands/FavoriteAuction";
 import { UnfavoriteAuctionHandler } from "./watchlist/application/commands/UnfavoriteAuction";
 import { GetMyFavoritesHandler } from "./watchlist/application/queries/GetMyFavorites";
-import { AuctionCatalogProjection } from "./watchlist/infrastructure/projections/AuctionCatalogProjection";
-import { FavoritesProjection } from "./watchlist/infrastructure/projections/FavoritesProjection";
 import { ReadModelAuctionCatalog } from "./watchlist/infrastructure/ReadModelAuctionCatalog";
 import { WatchlistRepository } from "./watchlist/infrastructure/WatchlistRepository";
 
 // Infrastructure
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
 const prisma = new PrismaClient({ adapter });
-// Command side writes the event store through Postgres.js; read models
-// (projections, queries) stay on Prisma. Its search_path includes the Hermes
-// schema, so outbox rows commit in the command's own transaction.
+// Command side writes the event store through Postgres.js; its search_path
+// includes the Hermes schema, so outbox rows commit in the command's own
+// transaction. Queries stay on Prisma; read models are built by the worker
+// process (src/worker.ts).
 const commandUow = new PostgresUnitOfWork(
   createPostgresClient(process.env["DATABASE_URL"], {
     extraSchemas: [HERMES_SCHEMA],
@@ -51,9 +48,6 @@ const relay = createOutboxRelay({
   pulsar,
   consumerName: "bidflow_api",
 });
-const readModelUow = new PrismaUnitOfWork(prisma);
-const favoritesProjection = new FavoritesProjection(readModelUow);
-const auctionCatalogProjection = new AuctionCatalogProjection(readModelUow);
 const eventStore = new OutboxEventStore(
   new EventStore(commandUow),
   commandUow,
@@ -61,17 +55,7 @@ const eventStore = new OutboxEventStore(
 );
 const auctionRepository = new AuctionRepository(eventStore);
 const watchlistRepository = new WatchlistRepository(eventStore);
-const auctionCatalog = new ReadModelAuctionCatalog(readModelUow);
-// Active auctions are served by the worker (src/worker.ts) from Pulsar; the
-// Watchlist views still run through the polling subscription.
-const readModels = new CatchUpSubscription(
-  readModelUow,
-  {
-    auction: [auctionCatalogProjection],
-    watchlist: [favoritesProjection],
-  },
-  "read-models",
-);
+const auctionCatalog = new ReadModelAuctionCatalog(prisma);
 
 export const createAuctionHandler = withBehaviors(
   new CreateAuctionHandler(auctionRepository),
@@ -117,7 +101,6 @@ async function start(): Promise<void> {
   app.listen(PORT, () => {
     console.log(`BidFlow running on http://localhost:${PORT}`);
   });
-  readModels.start();
 }
 
 start().catch((error) => {
