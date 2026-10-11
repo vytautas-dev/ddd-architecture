@@ -13,6 +13,10 @@ const config: Config = {
   // test files must not run in parallel workers.
   maxWorkers: 1,
   testTimeout: 30_000,
+  // Hermes 1.0.0-alpha.16 stops its replication connection with
+  // `sql.end({ timeout: 1000 })` — milliseconds, but Postgres.js reads seconds —
+  // leaving a ~17-minute timer that keeps the worker alive after every test.
+  forceExit: true,
 };
 
 export default config;

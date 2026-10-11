@@ -12,18 +12,26 @@ const TIMESTAMP_OID = 1114; // `timestamp without time zone`
  * - Prisma maps `DateTime` to `timestamp(3)` (no time zone) and treats the
  *   stored wall-clock value as UTC. Postgres.js would parse it in the local
  *   time zone, shifting every date by the host's UTC offset.
+ *
+ * `extraSchemas` are appended to the search_path — the command side adds the
+ * Hermes schema, so the outbox insert Hermes issues (unqualified `outbox`)
+ * lands in the same transaction as the event-store insert.
  */
-export function createPostgresClient(databaseUrl: string | undefined): Sql {
+export function createPostgresClient(
+  databaseUrl: string | undefined,
+  options: { extraSchemas?: string[] } = {},
+): Sql {
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is not set");
   }
 
   const url = new URL(databaseUrl);
-  const schema = url.searchParams.get("schema");
+  const schema = url.searchParams.get("schema") ?? "public";
   url.searchParams.delete("schema");
+  const searchPath = [schema, ...(options.extraSchemas ?? [])].join(", ");
 
   return postgres(url.toString(), {
-    ...(schema ? { connection: { search_path: schema } } : {}),
+    connection: { search_path: searchPath },
     types: {
       timestampAsUtc: {
         to: TIMESTAMP_OID,

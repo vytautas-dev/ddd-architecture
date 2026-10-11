@@ -25,6 +25,8 @@
   },
   "private": true,
   "dependencies": {
+    "@chassisjs/hermes": "1.0.0-alpha.16",
+    "@chassisjs/hermes-postgresql": "1.0.0-alpha.16",
     "@prisma/adapter-pg": "^7.6.0",
     "@prisma/client": "^7.6.0",
     "dotenv": "^17.3.1",
