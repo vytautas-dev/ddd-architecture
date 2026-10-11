@@ -23,6 +23,15 @@ export type ProjectionSubscriptionName =
 export const PROJECTION_SUBSCRIPTION_NAMES: readonly ProjectionSubscriptionName[] =
   PROJECTION_SUBSCRIPTIONS.map((s) => s.subscription);
 
+/** Each projection with the stream type it reads (topics are keyed by it). */
+export const PROJECTION_STREAM_TYPES = Object.entries(TOPICS).flatMap(
+  ([streamType, topic]) =>
+    PROJECTION_SUBSCRIPTIONS.filter((s) => s.topic === topic).map((s) => ({
+      streamType,
+      subscription: s.subscription,
+    })),
+);
+
 /**
  * Where a subscription's poison messages go after their last redelivery. One
  * dead-letter topic per subscription, so a replay only reaches the projection

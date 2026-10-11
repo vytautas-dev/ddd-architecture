@@ -7,6 +7,7 @@ import type { DomainEvent } from "../shared/domain/DomainEvent";
 import type { IProjection } from "../shared/domain/IProjection";
 import type { EventEnvelope } from "../shared/infrastructure/messaging/EventEnvelope";
 import { ProjectionConsumer } from "../shared/infrastructure/messaging/ProjectionConsumer";
+import { readProjectionsStatus } from "../shared/infrastructure/messaging/projectionsStatus";
 import { createPulsarClient } from "../shared/infrastructure/messaging/pulsar";
 import { replayDeadLetters } from "../shared/infrastructure/messaging/replayDeadLetters";
 import { StreamOrderedProjection } from "../shared/infrastructure/messaging/StreamOrderedProjection";
@@ -24,9 +25,10 @@ import { FavoritesProjection } from "../watchlist/infrastructure/projections/Fav
 import { EVENT_SCHEMAS } from "../worker";
 import { envelopesOn, eventually, publishEnvelope } from "./support/pipeline";
 
-// Scenarios 3 and 10: a poison event lands in the dead-letter topic instead of
-// spinning forever, freezes only its own stream in its own projection, and
-// comes back with dlq:replay once the projection is fixed.
+// Scenarios 3, 10 and 12: a poison event lands in the dead-letter topic
+// instead of spinning forever, freezes only its own stream in its own
+// projection, shows up in projections:status, and comes back with dlq:replay
+// once the projection is fixed.
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -114,6 +116,7 @@ const rowOf = async (auctionId: string) =>
   (await activeAuctions.execute()).find((row) => row.id === auctionId);
 const watcher = uuid();
 const healthy = uuid();
+const ourStreams = new Set<string>([poisoned, healthy, watcher]);
 const deadLetters = () =>
   envelopesOn(pulsar, deadLetterTopicFor(TOPICS.auction, "active-auctions"));
 
@@ -121,7 +124,7 @@ it("dead-letters a poison event and the rest of its stream; everything else keep
   await publish(created(poisoned, 1));
   await publish(bidPlaced(poisoned, 2, 120, 1)); // the poison
   await publish(bidPlaced(poisoned, 3, 130, 2)); // waits on 2, then dead-letters too
-  await publishEnvelope(pulsar, TOPICS.watchlist, favorited(watcher, poisoned));
+  await record(TOPICS.watchlist, favorited(watcher, poisoned));
   await publish(created(healthy, 1));
   await publish(bidPlaced(healthy, 2, 200, 1));
 
@@ -156,6 +159,33 @@ it("dead-letters a poison event and the rest of its stream; everything else keep
   );
 }, 60_000);
 
+it("reports the frozen stream with its gap in projections:status (scenario 12)", async () => {
+  const lagging = (await readProjectionsStatus(prisma, { frozenAfterMs: 0 }))
+    .flatMap((s) =>
+      s.lagging.map((stream) => ({ ...stream, of: s.projection })),
+    )
+    .filter((s) => ourStreams.has(s.streamId));
+
+  expect(lagging).toEqual([
+    expect.objectContaining({
+      of: "active-auctions",
+      streamId: poisoned,
+      applied: 1,
+      head: 3,
+      gap: 2,
+      frozen: true,
+    }),
+  ]);
+
+  // under the threshold it is listed, but only as lagging
+  const activeAuctionsStatus = (
+    await readProjectionsStatus(prisma, { frozenAfterMs: 60 * 60 * 1000 })
+  ).find((s) => s.projection === "active-auctions");
+  expect(
+    activeAuctionsStatus?.lagging.find((s) => s.streamId === poisoned),
+  ).toMatchObject({ gap: 2, frozen: false });
+});
+
 it("replays dead letters after the fix, and other views ignore the copies (scenario 10)", async () => {
   // dead letters survive a restart of the consumers
   await stopWorker();
@@ -185,10 +215,32 @@ it("replays dead letters after the fix, and other views ignore the copies (scena
   expect(seen.every((bid) => bid === 130)).toBe(true);
 }, 60_000);
 
+it("drops the stream from projections:status once replayed (scenario 12)", async () => {
+  const statuses = await readProjectionsStatus(prisma, { frozenAfterMs: 0 });
+  const ours = statuses
+    .flatMap((s) => s.lagging)
+    .filter((s) => ourStreams.has(s.streamId));
+  expect(ours).toEqual([]);
+});
+
 // --- helpers -----------------------------------------------------------------
 
-const publish = (envelope: EventEnvelope) =>
-  publishEnvelope(pulsar, TOPICS.auction, envelope);
+const publish = (envelope: EventEnvelope) => record(TOPICS.auction, envelope);
+
+/** What the command side and the relay do: append to the event store, publish. */
+async function record(topic: Topic, envelope: EventEnvelope): Promise<void> {
+  await prisma.eventStore.create({
+    data: {
+      streamId: envelope.streamId,
+      streamType: envelope.streamType,
+      eventType: envelope.eventType,
+      version: envelope.version,
+      payload: JSON.parse(JSON.stringify(envelope.payload)),
+      occurredAt: envelope.payload.occurredAt,
+    },
+  });
+  await publishEnvelope(pulsar, topic, envelope);
+}
 
 function auctionEnvelope(
   auctionId: string,
