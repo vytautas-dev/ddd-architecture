@@ -9,13 +9,17 @@ import { withBehaviors } from "../../application/withBehaviors";
 import type { IProjection } from "../../domain/IProjection";
 import { CatchUpSubscription } from "../CatchUpSubscription";
 import { EventStore } from "../EventStore";
+import { PostgresUnitOfWork } from "../PostgresUnitOfWork";
 import { PrismaUnitOfWork } from "../PrismaUnitOfWork";
+import { createPostgresClient } from "../postgresClient";
 
 const DAY = 24 * 60 * 60 * 1000;
 
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
 const prisma = new PrismaClient({ adapter });
-const uow = new PrismaUnitOfWork(prisma);
+const readModelUow = new PrismaUnitOfWork(prisma);
+const sql = createPostgresClient(process.env["DATABASE_URL"]);
+const commandUow = new PostgresUnitOfWork(sql);
 
 /** Throws until `healed` is set, so a test can watch redelivery converge. */
 class FlakyProjection implements IProjection {
@@ -29,12 +33,16 @@ class FlakyProjection implements IProjection {
 }
 
 const createAuction = withBehaviors(
-  new CreateAuctionHandler(new AuctionRepository(new EventStore(uow))),
-  { transaction: uow },
+  new CreateAuctionHandler(new AuctionRepository(new EventStore(commandUow))),
+  { transaction: commandUow },
 );
 
 function subscriptionWith(projections: IProjection[]): CatchUpSubscription {
-  return new CatchUpSubscription(uow, { auction: projections }, "read-models");
+  return new CatchUpSubscription(
+    readModelUow,
+    { auction: projections },
+    "read-models",
+  );
 }
 
 function createAuctionCommand() {
@@ -62,11 +70,14 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await prisma.$disconnect();
+  await sql.end();
 });
 
 describe("Atomicity — events, projections and the checkpoint (integration)", () => {
   it("commits the command before any projection has run", async () => {
-    const subscription = subscriptionWith([new ActiveAuctionsProjection(uow)]);
+    const subscription = subscriptionWith([
+      new ActiveAuctionsProjection(readModelUow),
+    ]);
     const command = createAuctionCommand();
 
     await createAuction.execute(command);
@@ -105,7 +116,7 @@ describe("Atomicity — events, projections and the checkpoint (integration)", (
   it("rolls back earlier projection writes and the checkpoint together", async () => {
     // the healthy projection writes first, then the second one blows up
     const subscription = subscriptionWith([
-      new ActiveAuctionsProjection(uow),
+      new ActiveAuctionsProjection(readModelUow),
       new FlakyProjection(),
     ]);
     const command = createAuctionCommand();
@@ -124,7 +135,7 @@ describe("Atomicity — events, projections and the checkpoint (integration)", (
   it("redelivers the event until the projection stops failing", async () => {
     const flaky = new FlakyProjection();
     const subscription = subscriptionWith([
-      new ActiveAuctionsProjection(uow),
+      new ActiveAuctionsProjection(readModelUow),
       flaky,
     ]);
     const command = createAuctionCommand();

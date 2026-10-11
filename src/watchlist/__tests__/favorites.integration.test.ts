@@ -10,7 +10,9 @@ import { PrismaClient } from "../../generated/prisma/client";
 import { withBehaviors } from "../../shared/application/withBehaviors";
 import { CatchUpSubscription } from "../../shared/infrastructure/CatchUpSubscription";
 import { EventStore } from "../../shared/infrastructure/EventStore";
+import { PostgresUnitOfWork } from "../../shared/infrastructure/PostgresUnitOfWork";
 import { PrismaUnitOfWork } from "../../shared/infrastructure/PrismaUnitOfWork";
+import { createPostgresClient } from "../../shared/infrastructure/postgresClient";
 import { FavoriteAuctionHandler } from "../application/commands/FavoriteAuction";
 import { UnfavoriteAuctionHandler } from "../application/commands/UnfavoriteAuction";
 import { GetMyFavoritesHandler } from "../application/queries/GetMyFavorites";
@@ -30,48 +32,50 @@ const DAY = 24 * 60 * 60 * 1000;
 // z behaviorami, żeby scenariusze przechodziły przez ścieżkę transakcyjną.
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
 const prisma = new PrismaClient({ adapter });
-const uow = new PrismaUnitOfWork(prisma);
+const readModelUow = new PrismaUnitOfWork(prisma);
+const sql = createPostgresClient(process.env["DATABASE_URL"]);
+const commandUow = new PostgresUnitOfWork(sql);
 
-const eventStore = new EventStore(uow);
+const eventStore = new EventStore(commandUow);
 const readModels = new CatchUpSubscription(
-  uow,
+  readModelUow,
   {
     auction: [
-      new ActiveAuctionsProjection(uow),
-      new AuctionCatalogProjection(uow),
+      new ActiveAuctionsProjection(readModelUow),
+      new AuctionCatalogProjection(readModelUow),
     ],
-    watchlist: [new FavoritesProjection(uow)],
+    watchlist: [new FavoritesProjection(readModelUow)],
   },
   "read-models",
 );
 const auctionRepository = new AuctionRepository(eventStore);
 const watchlistRepository = new WatchlistRepository(eventStore);
-const auctionCatalog = new ReadModelAuctionCatalog(uow);
+const auctionCatalog = new ReadModelAuctionCatalog(readModelUow);
 
 const createAuction = withBehaviors(
   new CreateAuctionHandler(auctionRepository),
   {
-    transaction: uow,
+    transaction: commandUow,
   },
 );
 const startAuction = withBehaviors(new StartAuctionHandler(auctionRepository), {
   retry: true,
-  transaction: uow,
+  transaction: commandUow,
 });
 const cancelAuction = withBehaviors(
   new CancelAuctionHandler(auctionRepository),
   {
     retry: true,
-    transaction: uow,
+    transaction: commandUow,
   },
 );
 const favoriteAuction = withBehaviors(
   new FavoriteAuctionHandler(watchlistRepository, auctionCatalog),
-  { retry: true, transaction: uow },
+  { retry: true, transaction: commandUow },
 );
 const unfavoriteAuction = withBehaviors(
   new UnfavoriteAuctionHandler(watchlistRepository),
-  { retry: true, transaction: uow },
+  { retry: true, transaction: commandUow },
 );
 const getMyFavorites = new GetMyFavoritesHandler(prisma);
 
@@ -110,6 +114,7 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await prisma.$disconnect();
+  await sql.end();
 });
 
 describe("Favorites — integration (path through handlers + DB)", () => {
