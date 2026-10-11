@@ -45,6 +45,8 @@ The user learns by doing. Give clear instructions, let them implement, answer qu
 - **Command Handler** takes a command, loads the aggregate from repository, calls a domain method, saves events
 - **Query Handler** reads from a Read Model (denormalized table), never from the event store
 - Commands and queries have **separate classes** — no single "service" that does both
+- A query handler reads its view directly, with no port. A command that needs read-model data for a domain decision goes through a port + Anti-Corruption Layer (e.g. `IAuctionCatalog`)
+- Bounded contexts talk through events (Published Language), never through another context's tables
 
 ### General
 - TypeScript strict mode throughout
@@ -58,12 +60,15 @@ The user learns by doing. Give clear instructions, let them implement, answer qu
 
 ```
 Node.js + TypeScript (strict)
-Express.js       — HTTP layer (thin, delegates to application layer)
-PostgreSQL        — database
-Prisma           — ORM (infrastructure layer only)
-Zod              — schema validation (input validation at boundaries)
-Jest + ts-jest   — tests
-uuid             — ID generation
+Express.js        — HTTP layer (thin, delegates to application layer)
+PostgreSQL 16     — database (wal_level=logical, needed by the outbox)
+Postgres.js       — command side: event store + Unit of Work
+Prisma            — read side (projections, queries) and migrations; infrastructure only
+Hermes            — transactional outbox over logical replication (@chassisjs/hermes-postgresql)
+Apache Pulsar 4.0 — transport for events to the read models
+Zod               — validation at boundaries (API, worker messages)
+Jest + ts-jest    — tests; Testcontainers for Postgres + Pulsar
+uuid              — ID generation
 ```
 
 ---
@@ -75,47 +80,42 @@ src/
 ├── auction/            # Bounded Context: Auction (core domain)
 │   ├── domain/         # Pure domain logic
 │   ├── application/    # Command & Query Handlers
-│   ├── infrastructure/ # Prisma, EventStore, Projections
+│   ├── infrastructure/ # Repository, projections, event schemas
 │   └── api/            # Express Router
-├── identity/           # Bounded Context: Identity (users)
-├── shared/             # Types and utilities shared across contexts
-└── index.ts            # Application bootstrap
+├── watchlist/          # Bounded Context: Watchlist (favorites), same layers
+├── shared/             # Event store, Units of Work, messaging (outbox, Pulsar, ledger)
+├── index.ts            # API process: Express + outbox relay
+└── worker.ts           # Worker process: Pulsar consumers → projections
+scripts/                # dlq:replay, projections:status
 ```
 
 ---
 
 ## Current Stage
 
-**Wymaganie 1 — "favorite upcoming auctions" — COMPLETE** (plan: `WYMAGANIE_1_ULUBIONE_PLAN.md`). Stages 1–4 effectively covered:
+History, decisions and rejected alternatives live in `JOURNAL.md` (newest on top) and `docs/adr/`. This section holds only what is true now.
 
-- **DDD** — two bounded contexts: `Auction` and `Watchlist` (aggregate `Watchlist`, streamId = bidderId).
-- **Event Sourcing** — event store generalized into `shared/`; each `streamType` ("auction", "watchlist") has its own Pulsar topic, and each projection its own subscription on it (see the Pulsar pipeline below).
-- **CQRS** — commands (favorite/unfavorite/start) separated from queries (read from denormalized views only).
-- **Read Models / Projections** — `ActiveAuctionsProjection` (Auction) + `AuctionCatalogProjection` and `FavoritesProjection` (Watchlist). `AuctionCatalogProjection` is the single consumer of another context's events; `FavoritesProjection` is Watchlist-only.
+**Done:**
+- Wymaganie 1 "favorite upcoming auctions" (`WYMAGANIE_1_ULUBIONE_PLAN.md`): bounded contexts Auction and Watchlist; Watchlist owns its auction catalog view and reads it through an ACL (`IAuctionCatalog`).
+- Optimistic concurrency + retry, and transactions, applied as decorators: `withBehaviors(handler, { retry, transaction })`.
+- Idempotent projections.
+- Event-driven read models (ADR-0001, `JOURNAL.md` 2026-10-11): command → `event_store` + Hermes outbox in one transaction → relay in the API → Pulsar → worker → projection guarded by the stream version ledger → view. Poison events go to a per-subscription DLQ.
 
-**Concurrency control — DONE.** Optimistic concurrency is fully wired in both contexts: the aggregate keeps `persistedVersion` (the version at load time), the event store enforces `@@unique([streamId, version])`, and a unique violation (`23505`) surfaces as `OptimisticConcurrencyError`. On top of that, a **retry** behavior replays the whole command against fresh state on conflict. Retry is applied declaratively as a **decorator** at wiring time — `withBehaviors(handler, { retry: true })` in `index.ts` — so handlers stay pure (no retry boilerplate inside them). All mutating commands (place-bid/cancel/start/favorite/unfavorite) run under `{ retry: true }`; `CreateAuction` opens a fresh stream so it needs none. Reusable pieces live in `shared/application/` (`CommandHandler`, `withBehaviors`, `retryOnConcurrencyConflict`).
+**Commands:**
+- `npm run dev` — API + relay. `npm run worker` — read models. Both need Postgres and Pulsar (`docker compose up -d`; Dekaf UI on `:8090`).
+- `npm test` — needs Docker (Testcontainers).
+- `npm run dlq:replay -- <subscription>` — send dead letters back after a fix.
+- `npm run projections:status` — which views lag behind the event store.
 
-**Transactions (atomicity) — DONE.** A command's events and its outbox rows commit atomically via the **Unit of Work** pattern: `PostgresUnitOfWork` (`shared/infrastructure/`, Postgres.js) carries the transaction through the async call chain with `AsyncLocalStorage`, so `EventStore` and handlers read `uow.client` without signature changes. The `IUnitOfWork` port lives in `shared/application/` (Dependency Inversion). Wired declaratively: `withBehaviors(handler, { retry: true, transaction: commandUow })` — retry wraps transaction (each attempt gets a fresh tx). All mutating commands run transactionally, including `CreateAuction` (transaction only, no retry). Projections are **not** in the command transaction any more: on the read side `PrismaUnitOfWork` wraps each projection write together with its ledger advance (see the Pulsar pipeline below). Jest runs with `maxWorkers: 1` because test files share one Postgres and one Pulsar (subscriptions).
+**Gotchas:**
+- Hermes is pinned to `1.0.0-alpha.16` and patched with `patch-package` (`patches/`). Do not bump it without checking the fix landed upstream.
+- The API runs as a single instance (Hermes holds the replication slot); workers scale.
+- `prisma migrate dev` does not regenerate the client: run `prisma generate` after it.
+- `X-User-Id` is a placeholder for a future Identity context.
 
-**Cross-context read model ownership — DONE.** The Watchlist no longer reads the Auction context's `active_auctions_view`. It owns `watchlist_auction_catalog_view`, built by `AuctionCatalogProjection` from `streamType: "auction"` events — the contract between contexts is the **Published Language** (events), never another context's tables. Unlike the Auction view it **never deletes**: `Closed`/`Cancelled` are status updates, which fixed a bug where a cancelled auction surfaced as `AuctionToFavoriteNotFoundError` (404) instead of `AuctionNotUpcomingError` (422). `IAuctionCatalog` is a true **Anti-Corruption Layer**: it translates vocabulary (`{ exists, status: SCHEDULED|... }` → `{ exists, isUpcoming }`), so the aggregate keeps the *rule* while the ACL owns the *translation*. Rule of thumb established: query side (no domain decision) reads the view directly with no port; command side (value feeds an aggregate decision) goes through a port + ACL. Details and the rebuild-strategy research in `JOURNAL.md` (2026-07-28).
+**Known debts:** Watchlist consumes Auction's domain events directly (next step: integration events); false 404 when favoriting a just-created auction (3C); fixed redelivery delay; a long transient failure needs a manual `dlq:replay`; a projection that writes a wrong value without throwing needs a rebuild.
 
-**Read/write split of the favorites view — DONE.** `favorites_view` is now `(bidderId, auctionId, favoritedAt)`; auction attributes are joined at query time in `GetMyFavorites` (filter and order go through the relation, DTO and API contract unchanged). Consequences: `FavoritesProjection` lost the catalog lookup and four Auction event cases, so it **no longer subscribes to Auction events at all** — every cross-context subscription now lives in `AuctionCatalogProjection`, one seam instead of two. Write fan-out is gone: `BidPlaced` updates one catalog row instead of every watcher's row. Price paid knowingly: the `(bidderId, startsAt, auctionId)` covering index is unrecoverable (`startsAt` moved tables), so reads are a join with an order-by on the joined column — fine at tens of favorites per user, the trigger for keyset pagination at tens of thousands. The FK to the catalog was **dropped** in step 3B (`relationMode = "prisma"`, Prisma relation and join unchanged): separate subscriptions have no cross-topic order, so a favorite may briefly precede its catalog row — `GetMyFavorites` hides such rows until the catalog catches up.
-
-**Test database isolation — DONE.** Integration tests never touch the dev database: `npm test` starts a disposable Postgres (`wal_level=logical`) and Apache Pulsar 4.0 standalone with Testcontainers, once per run (`jest.globalSetup.ts`), applies migrations with `prisma migrate deploy`, and points `DATABASE_URL` / `PULSAR_URL` at them before any test module is imported. `jest.setup.ts` refuses to run if the containers are not up, so a test can never fall back to `.env`. Tests isolate by unique ids — nothing `TRUNCATE`s. Docker must be running.
-
-**Idempotent projections — DONE.** Every projection now converges when the same event is applied twice, which is the precondition for any redelivery (Pulsar redelivery after a nack, `dlq:replay`, a future rebuild). Translation applied throughout: `create` → `upsert`, `update` → `updateMany`, `delete` → `deleteMany` (Prisma's idiom for "…if it exists" — `update` throws `P2025` on zero matches), and the one relative write, `totalBids: { increment: 1 }`, became an absolute `totalBids: e.bidNumber`. That required enriching `BidPlacedEvent` with `bidNumber`, fed by a new `Auction.bidCount` incremented **only in `apply`** (so the write path and `reconstitute` agree); `cancel()` now states its rule as `bidCount > 0`. Rejected alternatives: a per-row `lastVersion` dedup marker (needed event metadata in `IProjection.handle`, which only arrived in step 3B — and there a per-stream ledger replaced it, because a per-row marker drops older events that touch other columns) and relying on checkpoint-in-the-same-transaction (holds only until the first rebuild without TRUNCATE). A missing row (`count === 0`) is logged as a warning by `reportMissingRow`, not dead-lettered: with the stream version ledger events arrive in stream order, so it signals a real anomaly. Details in `JOURNAL.md` (2026-08-20, 2026-10-11).
-
-**Event-driven read models via Pulsar — DONE** (step 3B; ADR-0001, spec #5, tickets #7–#15; details in `JOURNAL.md` 2026-10-11). The polling `CatchUpSubscription`, `projection_checkpoints` and `event_store.position` are gone.
-- **Outbox:** `OutboxEventStore` appends to `event_store` and queues the envelope `{ streamType, streamId, version, eventType, payload }` into the Hermes outbox (`@chassisjs/hermes-postgresql`, pinned to `1.0.0-alpha.16`, tables in the `hermes` schema) in the same transaction. `event_store` stays the source of truth; Pulsar is transport only.
-- **Relay in the API:** `npm run dev` runs Express plus Hermes, which reads the outbox through logical replication (`wal_level=logical`, commit order — no gap trap) and publishes to Pulsar 4.0 (`auction-events`, `watchlist-events`; key = `streamId`). Before publishing, the API provisions every projection subscription and each DLQ's `replay` subscription (`provisionSubscriptions`), so nothing published before the worker's first run is lost. **Single instance**: Hermes holds the replication slot.
-- **Worker:** `npm run worker` (`src/worker.ts`), scalable. One `Key_Shared` subscription per projection (`active-auctions`, `watchlist-auction-catalog`, `watchlist-favorites`). Each message is validated with the publishing context's Zod schema (`parseEnvelope`; Dates revived, malformed → DLQ), then `StreamOrderedProjection` applies it under the **stream version ledger** (`projection_stream_versions`): next version → apply + compare-and-set advance in one Prisma transaction; old → duplicate, ack; gap → nack. `IProjection.handle(event, { streamId, version })`.
-- **Failures:** nack → redelivered after 1 s, at most 10 times → `<topic>-<subscription>-DLQ`. A poison event freezes only its stream in its projection. `npm run dlq:replay -- <subscription>` sends dead letters back; other views drop the copies as duplicates.
-- **Monitoring:** `npm run projections:status [-- --frozen-after <s>]` lists streams whose ledger is behind `max(version)` in `event_store` and flags those waiting past the threshold as frozen. Dekaf (Pulsar UI) on `:8090` in `docker-compose.yml`.
-- **Hermes is patched** (`patches/…alpha.16.patch`, `patch-package` on `postinstall`): its acknowledge could drop the next transaction's inserts under concurrent commits. Found by the two-worker scenario; not reported upstream. Remove the patch once a fixed version ships. Jest needs `forceExit` (Hermes passes ms where postgres.js expects seconds).
-
-Carried-forward debts: Watchlist consumes Auction's **domain** events directly (integration events / public contract — the planned next step); the API is a single instance (way out: one Hermes `partitionKey` + slot per instance); a false 404 when favoriting a just-created auction, because the catalog is eventually consistent (3C); fixed redelivery delay, no backoff; a long transient failure dead-letters healthy streams, which then need a manual `dlq:replay` (`projections:status` shows them); a projection that writes a wrong value without throwing stays wrong — only a rebuild heals it.
-
-Parked: replay/rebuild of read models from history (new projection, rewound subscription); keyset pagination for `GetMyFavorites`; unit test for `AuctionCatalogProjection`; wiring duplicated between `index.ts`/`worker.ts` and the integration tests; `prisma migrate dev` does not regenerate the client (needs a separate `prisma generate`). `X-User-Id` is a placeholder for a future Identity context.
+**Parked:** rebuilding read models from history; keyset pagination for `GetMyFavorites`; unit test for `AuctionCatalogProjection`; wiring duplicated between `index.ts`/`worker.ts` and the integration tests.
 
 Update this section when a stage is completed.
 
